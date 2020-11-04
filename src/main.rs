@@ -2,6 +2,7 @@ use std::ffi::OsStr;
 
 use thiserror::Error;
 use winapi::shared::ntdef::HANDLE;
+use winapi::shared::winerror;
 use winapi::um::fltuser;
 
 #[derive(Debug, Error)]
@@ -75,7 +76,6 @@ impl Port {
                 &mut handle,
             )
         };
-        use winapi::shared::winerror;
         if winerror::SUCCEEDED(result) {
             Ok(Self { handle })
         } else {
@@ -98,8 +98,7 @@ impl Port {
                 overlapped,
             )
         };
-        if result == 0 {
-            //Success
+        if winerror::SUCCEEDED(result) {
             Ok(message)
         } else {
             Err(Error::GetMessageError(result))

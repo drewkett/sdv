@@ -6,9 +6,11 @@ use winapi::um::fltuser;
 
 #[derive(Debug, Error)]
 enum Error {
-    #[error("Port Connection Error ({0})")]
+    #[error("Port Connection Error (0x{0:x})")]
     ConnectError(i32),
-    #[error("Get Message Error ({0})")]
+    #[error("Access Denied")]
+    AccessDenied,
+    #[error("Get Message Error (0x{0:x})")]
     GetMessageError(i32),
 }
 
@@ -73,11 +75,10 @@ impl Port {
                 &mut handle,
             )
         };
-        if result == 0 {
-            //Success
-            Ok(Self { handle })
-        } else {
-            Err(Error::ConnectError(result))
+        match result as u32 {
+            0 => Ok(Self { handle }),
+            0x80070005 => Err(Error::AccessDenied),
+            _ => Err(Error::ConnectError(result)),
         }
     }
 

@@ -79,25 +79,12 @@ FsFilter1InstanceQueryTeardown (
     );
 
 FLT_PREOP_CALLBACK_STATUS
-FsFilter1PreWriteOperation (
+FsFilter1PreOperation (
     _Inout_ PFLT_CALLBACK_DATA Data,
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
     );
 
-FLT_PREOP_CALLBACK_STATUS
-FsFilter1PreReadOperation (
-    _Inout_ PFLT_CALLBACK_DATA Data,
-    _In_ PCFLT_RELATED_OBJECTS FltObjects,
-    _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
-    );
-
-FLT_PREOP_CALLBACK_STATUS
-FsFilter1PreCreateOperation (
-    _Inout_ PFLT_CALLBACK_DATA Data,
-    _In_ PCFLT_RELATED_OBJECTS FltObjects,
-    _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
-    );
 
 EXTERN_C_END
 
@@ -121,15 +108,15 @@ EXTERN_C_END
 CONST FLT_OPERATION_REGISTRATION Callbacks[] = {
     { IRP_MJ_READ,
       0,
-      FsFilter1PreReadOperation,
+      FsFilter1PreOperation,
       NULL },
     { IRP_MJ_WRITE,
       0,
-      FsFilter1PreWriteOperation,
+      FsFilter1PreOperation,
       NULL },
     { IRP_MJ_CREATE,
       0,
-      FsFilter1PreCreateOperation,
+      FsFilter1PreOperation,
       NULL },
 
     { IRP_MJ_OPERATION_END }
@@ -422,7 +409,7 @@ Return Value:
     MiniFilter callback routines.
 *************************************************************************/
 FLT_PREOP_CALLBACK_STATUS
-FsFilter1PreCreateOperation (
+FsFilter1PreOperation (
     _Inout_ PFLT_CALLBACK_DATA Data,
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
@@ -437,102 +424,39 @@ FsFilter1PreCreateOperation (
       // Not Sure about this option
       // It says it will query if safe not sure the circumstances when its not safe
       | FLT_FILE_NAME_QUERY_DEFAULT;
+
+    // For MajorFunction meaning look at https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/ns-fltkernel-_flt_parameters
+    // The value corresponds to the index into the union
+    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+                  ("FsFilter1!Pre(Op=%d) Start Thread=%08x\n",
+                    Data->Iopb->MajorFunction,
+                    Data->Thread) );
     status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
     if (NT_SUCCESS(status)) {
       PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                    ("FsFilter1!PreCreate: Name=%wZ\n",
-                     FileNameInfo->Name) );
+                    ("FsFilter1!Pre(Op=%d): Name=%wZ\n",
+                    Data->Iopb->MajorFunction,
+                    FileNameInfo->Name) );
       FltReleaseFileNameInformation(FileNameInfo);
     } else {
       switch (status) {
         case STATUS_FLT_INVALID_NAME_REQUEST:
           PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
-                        ("FsFilter1!PreCreate: FltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n") );
+                        ("FsFilter1!Pre(Op=%d): OpFltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n",
+                          Data->Iopb->MajorFunction
+                        ) );
           break;
         default:
           PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                        ("FsFilter1!PreCreate: FltGetFileNameInformation Failed, status=%08x\n",
+                        ("FsFilter1!Pre(Op=%d): FltGetFileNameInformation Failed, status=%08x\n",
+                          Data->Iopb->MajorFunction,
                           status) );
       }
     }
+    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+                  ("FsFilter1!Pre(Op=%d) End Thread=%08x\n",
+                    Data->Iopb->MajorFunction,
+                    Data->Thread) );
 
     return FLT_PREOP_SUCCESS_NO_CALLBACK;
 }
-
-FLT_PREOP_CALLBACK_STATUS
-FsFilter1PreWriteOperation (
-    _Inout_ PFLT_CALLBACK_DATA Data,
-    _In_ PCFLT_RELATED_OBJECTS FltObjects,
-    _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
-    )
-{
-    NTSTATUS status;
-
-    UNREFERENCED_PARAMETER( FltObjects ); UNREFERENCED_PARAMETER( CompletionContext ); 
-
-    PFLT_FILE_NAME_INFORMATION FileNameInfo;
-    FLT_FILE_NAME_OPTIONS Options = FLT_FILE_NAME_NORMALIZED 
-      // Not Sure about this option
-      // It says it will query if safe not sure the circumstances when its not safe
-      | FLT_FILE_NAME_QUERY_DEFAULT;
-    status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
-    if (NT_SUCCESS(status)) {
-      PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                    ("FsFilter1!PreWrite: Name=%wZ\n",
-                     FileNameInfo->Name) );
-      FltReleaseFileNameInformation(FileNameInfo);
-    } else {
-      switch (status) {
-        case STATUS_FLT_INVALID_NAME_REQUEST:
-          PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
-                        ("FsFilter1!PreWrite: FltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n") );
-          break;
-        default:
-          PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                        ("FsFilter1!PreWrite: FltGetFileNameInformation Failed, status=%08x\n",
-                          status) );
-      }
-    }
-
-    return FLT_PREOP_SUCCESS_NO_CALLBACK;
-}
-
-FLT_PREOP_CALLBACK_STATUS
-FsFilter1PreReadOperation (
-    _Inout_ PFLT_CALLBACK_DATA Data,
-    _In_ PCFLT_RELATED_OBJECTS FltObjects,
-    _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
-    )
-{
-    NTSTATUS status;
-
-    UNREFERENCED_PARAMETER( FltObjects ); UNREFERENCED_PARAMETER( CompletionContext ); 
-
-    PFLT_FILE_NAME_INFORMATION FileNameInfo;
-    FLT_FILE_NAME_OPTIONS Options = FLT_FILE_NAME_NORMALIZED 
-      // Not Sure about this option
-      // It says it will query if safe not sure the circumstances when its not safe
-      | FLT_FILE_NAME_QUERY_DEFAULT;
-    status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
-    if (NT_SUCCESS(status)) {
-      PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                    ("FsFilter1!PreRead: Name=%wZ\n",
-                     FileNameInfo->Name) );
-      FltReleaseFileNameInformation(FileNameInfo);
-    } else {
-      switch (status) {
-        case STATUS_FLT_INVALID_NAME_REQUEST:
-          PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
-                        ("FsFilter1!PreRead: FltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n") );
-          break;
-        default:
-          PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                        ("FsFilter1!PreRead: FltGetFileNameInformation Failed, status=%08x\n",
-                          status) );
-      }
-    }
-
-    return FLT_PREOP_SUCCESS_NO_CALLBACK;
-}
-
-

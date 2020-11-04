@@ -15,18 +15,25 @@ Environment:
 --*/
 
 #include <fltKernel.h>
+#include <ntstrsafe.h>
 #include <dontuse.h>
 
 #pragma prefast(disable:__WARNING_ENCODE_MEMBER_FUNCTION_POINTER, "Not valid for kernel mode drivers")
 
 
 PFLT_FILTER gFilterHandle;
+PFLT_PORT gServerPort;
+PFLT_PORT gClientPort;
 ULONG_PTR OperationStatusCtx = 1;
 
-#define PTDBG_TRACE_ROUTINES            0x00000001
-#define PTDBG_TRACE_OPERATION_STATUS    0x00000002
+#define TRACE_FILENAMES            0x00000001
+#define TRACE_INIT    0x00000002
+#define TRACE_COMMS    0x00000004
+#define TRACE_ERRORS    0x00000008
+#define TRACE_THREADING            0x00000010
+#define TRACE_ALWAYS    0xFFFFFFFF
 
-ULONG gTraceFlags = PTDBG_TRACE_ROUTINES;
+ULONG gTraceFlags = TRACE_INIT|TRACE_COMMS;
 
 
 #define PT_DBG_PRINT( _dbgLevel, _string )          \
@@ -188,7 +195,7 @@ Return Value:
 
     PAGED_CODE();
 
-    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
+    PT_DBG_PRINT( TRACE_INIT,
                   ("FsFilter1!FsFilter1InstanceSetup: Entered\n") );
 
     return STATUS_SUCCESS;
@@ -230,7 +237,7 @@ Return Value:
 
     PAGED_CODE();
 
-    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
+    PT_DBG_PRINT( TRACE_INIT,
                   ("FsFilter1!FsFilter1InstanceQueryTeardown: Entered\n") );
 
     return STATUS_SUCCESS;
@@ -266,7 +273,7 @@ Return Value:
 
     PAGED_CODE();
 
-    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
+    PT_DBG_PRINT( TRACE_INIT,
                   ("FsFilter1!FsFilter1InstanceTeardownStart: Entered\n") );
 }
 
@@ -300,14 +307,40 @@ Return Value:
 
     PAGED_CODE();
 
-    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
+    PT_DBG_PRINT( TRACE_INIT,
                   ("FsFilter1!FsFilter1InstanceTeardownComplete: Entered\n") );
 }
-
 
 /*************************************************************************
     MiniFilter initialization and unload routines.
 *************************************************************************/
+NTSTATUS PortConnectNotify (
+      _In_ PFLT_PORT ClientPort,
+      _In_ PVOID ServerPortCookie,
+      _In_ PVOID ConnectionContext,
+      _In_ ULONG SizeOfContext,
+      _Out_ PVOID *ConnectionPortCookie
+      )
+{
+  UNREFERENCED_PARAMETER( ServerPortCookie );
+  UNREFERENCED_PARAMETER( ConnectionContext );
+  UNREFERENCED_PARAMETER( SizeOfContext );
+  UNREFERENCED_PARAMETER( ConnectionPortCookie );
+  PT_DBG_PRINT( TRACE_COMMS,
+                ("FsFilter1!PortConnectNotify\n") );
+  gClientPort = ClientPort;
+  return STATUS_SUCCESS;
+}
+
+VOID PortDisconnectNotify (
+      _In_ PVOID ConnectionCookie
+      )
+{
+  UNREFERENCED_PARAMETER( ConnectionCookie );
+  PT_DBG_PRINT( TRACE_COMMS,
+                ("FsFilter1!PortDisconnectNotify\n") );
+  FltCloseClientPort(gFilterHandle,&gClientPort);
+}
 
 NTSTATUS
 DriverEntry (
@@ -336,15 +369,31 @@ Return Value:
 --*/
 {
     NTSTATUS status;
+    UNICODE_STRING port_name;
+    OBJECT_ATTRIBUTES attrs;
+
 
     UNREFERENCED_PARAMETER( RegistryPath );
-
-    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
-                  ("FsFilter1!DriverEntry: Entered\n") );
+    PT_DBG_PRINT( TRACE_INIT,
+                ("FsFilter1!DriverEntry: Entered\n") );
 
     //
     //  Register with FltMgr to tell it our callback routines
     //
+    status = RtlUnicodeStringInit(&port_name,L"\\sdv_comms_port\0");
+    if (!NT_SUCCESS(status)) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                        ("FsFilter1!DriverEntry: Error initializing port name ({})\n", status) );
+        return status;
+    }
+
+    InitializeObjectAttributes(
+        &attrs,
+        &port_name,
+        OBJ_KERNEL_HANDLE,
+        NULL, // RootDirectory (I think with leading '\' port name is full qualified)
+        NULL // Security Descriptor (Not currently dealing with security)
+    );
 
     status = FltRegisterFilter( DriverObject,
                                 &FilterRegistration,
@@ -353,15 +402,23 @@ Return Value:
     FLT_ASSERT( NT_SUCCESS( status ) );
 
     if (NT_SUCCESS( status )) {
-
-        //
-        //  Start filtering i/o
-        //
-
+        status = FltCreateCommunicationPort(
+            gFilterHandle,
+            &gServerPort,
+            &attrs,
+            NULL, // ServerPortCookie
+            &PortConnectNotify,
+            &PortDisconnectNotify,
+            NULL, // MessageNotifyCallback,
+            1 // MaxConnections
+        );
+        if (!NT_SUCCESS( status )) {
+            FltUnregisterFilter( gFilterHandle );
+            return status;
+        }
         status = FltStartFiltering( gFilterHandle );
 
         if (!NT_SUCCESS( status )) {
-
             FltUnregisterFilter( gFilterHandle );
         }
     }
@@ -396,9 +453,10 @@ Return Value:
 
     PAGED_CODE();
 
-    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
+    PT_DBG_PRINT( TRACE_INIT,
                   ("FsFilter1!FsFilter1Unload: Entered\n") );
 
+    FltCloseCommunicationPort( gServerPort );
     FltUnregisterFilter( gFilterHandle );
 
     return STATUS_SUCCESS;
@@ -427,13 +485,13 @@ FsFilter1PreOperation (
 
     // For MajorFunction meaning look at https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/ns-fltkernel-_flt_parameters
     // The value corresponds to the index into the union
-    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                  ("FsFilter1!Pre(Op=%d) Start Thread=%08x\n",
+    PT_DBG_PRINT( TRACE_THREADING,
+                  ("FsFilter1!Pre(Op=%d) Start Thread=0x%08x\n",
                     Data->Iopb->MajorFunction,
                     Data->Thread) );
     status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
     if (NT_SUCCESS(status)) {
-      PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+      PT_DBG_PRINT( TRACE_FILENAMES,
                     ("FsFilter1!Pre(Op=%d): Name=%wZ\n",
                     Data->Iopb->MajorFunction,
                     FileNameInfo->Name) );
@@ -441,20 +499,20 @@ FsFilter1PreOperation (
     } else {
       switch (status) {
         case STATUS_FLT_INVALID_NAME_REQUEST:
-          PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
+          PT_DBG_PRINT( TRACE_FILENAMES,
                         ("FsFilter1!Pre(Op=%d): OpFltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n",
                           Data->Iopb->MajorFunction
                         ) );
           break;
         default:
-          PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                        ("FsFilter1!Pre(Op=%d): FltGetFileNameInformation Failed, status=%08x\n",
+          PT_DBG_PRINT( TRACE_FILENAMES,
+                        ("FsFilter1!Pre(Op=%d): FltGetFileNameInformation Failed, status=0x%08x\n",
                           Data->Iopb->MajorFunction,
                           status) );
       }
     }
-    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                  ("FsFilter1!Pre(Op=%d) End Thread=%08x\n",
+    PT_DBG_PRINT( TRACE_THREADING,
+                  ("FsFilter1!Pre(Op=%d) End Thread=0x%08x\n",
                     Data->Iopb->MajorFunction,
                     Data->Thread) );
 

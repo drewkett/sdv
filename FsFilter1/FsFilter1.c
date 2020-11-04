@@ -79,7 +79,21 @@ FsFilter1InstanceQueryTeardown (
     );
 
 FLT_PREOP_CALLBACK_STATUS
-FsFilter1PreOperation (
+FsFilter1PreWriteOperation (
+    _Inout_ PFLT_CALLBACK_DATA Data,
+    _In_ PCFLT_RELATED_OBJECTS FltObjects,
+    _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
+    );
+
+FLT_PREOP_CALLBACK_STATUS
+FsFilter1PreReadOperation (
+    _Inout_ PFLT_CALLBACK_DATA Data,
+    _In_ PCFLT_RELATED_OBJECTS FltObjects,
+    _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
+    );
+
+FLT_PREOP_CALLBACK_STATUS
+FsFilter1PreCreateOperation (
     _Inout_ PFLT_CALLBACK_DATA Data,
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
@@ -99,18 +113,6 @@ FsFilter1PostOperation (
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _In_opt_ PVOID CompletionContext,
     _In_ FLT_POST_OPERATION_FLAGS Flags
-    );
-
-FLT_PREOP_CALLBACK_STATUS
-FsFilter1PreOperationNoPostOperation (
-    _Inout_ PFLT_CALLBACK_DATA Data,
-    _In_ PCFLT_RELATED_OBJECTS FltObjects,
-    _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
-    );
-
-BOOLEAN
-FsFilter1DoRequestOperationStatus(
-    _In_ PFLT_CALLBACK_DATA Data
     );
 
 EXTERN_C_END
@@ -135,15 +137,15 @@ EXTERN_C_END
 CONST FLT_OPERATION_REGISTRATION Callbacks[] = {
     { IRP_MJ_READ,
       0,
-      FsFilter1PreOperation,
+      FsFilter1PreReadOperation,
       NULL },
     { IRP_MJ_WRITE,
       0,
-      FsFilter1PreOperation,
+      FsFilter1PreWriteOperation,
       NULL },
     { IRP_MJ_CREATE,
       0,
-      FsFilter1PreOperation,
+      FsFilter1PreCreateOperation,
       NULL },
 
     { IRP_MJ_OPERATION_END }
@@ -215,7 +217,7 @@ Return Value:
 
     PAGED_CODE();
 
-    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
                   ("FsFilter1!FsFilter1InstanceSetup: Entered\n") );
 
     return STATUS_SUCCESS;
@@ -257,7 +259,7 @@ Return Value:
 
     PAGED_CODE();
 
-    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
                   ("FsFilter1!FsFilter1InstanceQueryTeardown: Entered\n") );
 
     return STATUS_SUCCESS;
@@ -293,7 +295,7 @@ Return Value:
 
     PAGED_CODE();
 
-    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
                   ("FsFilter1!FsFilter1InstanceTeardownStart: Entered\n") );
 }
 
@@ -327,7 +329,7 @@ Return Value:
 
     PAGED_CODE();
 
-    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
                   ("FsFilter1!FsFilter1InstanceTeardownComplete: Entered\n") );
 }
 
@@ -366,7 +368,7 @@ Return Value:
 
     UNREFERENCED_PARAMETER( RegistryPath );
 
-    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
                   ("FsFilter1!DriverEntry: Entered\n") );
 
     //
@@ -423,7 +425,7 @@ Return Value:
 
     PAGED_CODE();
 
-    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
                   ("FsFilter1!FsFilter1Unload: Entered\n") );
 
     FltUnregisterFilter( gFilterHandle );
@@ -436,42 +438,15 @@ Return Value:
     MiniFilter callback routines.
 *************************************************************************/
 FLT_PREOP_CALLBACK_STATUS
-FsFilter1PreOperation (
+FsFilter1PreCreateOperation (
     _Inout_ PFLT_CALLBACK_DATA Data,
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
     )
-/*++
-
-Routine Description:
-
-    This routine is a pre-operation dispatch routine for this miniFilter.
-
-    This is non-pageable because it could be called on the paging path
-
-Arguments:
-
-    Data - Pointer to the filter callbackData that is passed to us.
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance, its associated volume and
-        file object.
-
-    CompletionContext - The context for the completion routine for this
-        operation.
-
-Return Value:
-
-    The return value is the status of the operation.
-
---*/
 {
     NTSTATUS status;
 
-    // UNREFERENCED_PARAMETER( Data );
     UNREFERENCED_PARAMETER( FltObjects ); UNREFERENCED_PARAMETER( CompletionContext ); 
-    // PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-    //               ("FsFilter1!FsFilter1PreOperation: Entered\n") );
 
     PFLT_FILE_NAME_INFORMATION FileNameInfo;
     FLT_FILE_NAME_OPTIONS Options = FLT_FILE_NAME_NORMALIZED 
@@ -481,18 +456,94 @@ Return Value:
     status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
     if (NT_SUCCESS(status)) {
       PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                    ("FsFilter1!FsFilter1PreOperation: FltGetFileNameInformation Name=%wZ\n",
+                    ("FsFilter1!PreCreate: Name=%wZ\n",
                      FileNameInfo->Name) );
       FltReleaseFileNameInformation(FileNameInfo);
     } else {
       switch (status) {
         case STATUS_FLT_INVALID_NAME_REQUEST:
-          PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                        ("FsFilter1!FsFilter1PreOperation: FltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n") );
+          PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
+                        ("FsFilter1!PreCreate: FltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n") );
           break;
         default:
           PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                        ("FsFilter1!FsFilter1PreOperation: FltGetFileNameInformation Failed, status=%08x\n",
+                        ("FsFilter1!PreCreate: FltGetFileNameInformation Failed, status=%08x\n",
+                          status) );
+      }
+    }
+
+    return FLT_PREOP_SUCCESS_NO_CALLBACK;
+}
+
+FLT_PREOP_CALLBACK_STATUS
+FsFilter1PreWriteOperation (
+    _Inout_ PFLT_CALLBACK_DATA Data,
+    _In_ PCFLT_RELATED_OBJECTS FltObjects,
+    _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
+    )
+{
+    NTSTATUS status;
+
+    UNREFERENCED_PARAMETER( FltObjects ); UNREFERENCED_PARAMETER( CompletionContext ); 
+
+    PFLT_FILE_NAME_INFORMATION FileNameInfo;
+    FLT_FILE_NAME_OPTIONS Options = FLT_FILE_NAME_NORMALIZED 
+      // Not Sure about this option
+      // It says it will query if safe not sure the circumstances when its not safe
+      | FLT_FILE_NAME_QUERY_DEFAULT;
+    status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
+    if (NT_SUCCESS(status)) {
+      PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+                    ("FsFilter1!PreWrite: Name=%wZ\n",
+                     FileNameInfo->Name) );
+      FltReleaseFileNameInformation(FileNameInfo);
+    } else {
+      switch (status) {
+        case STATUS_FLT_INVALID_NAME_REQUEST:
+          PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
+                        ("FsFilter1!PreWrite: FltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n") );
+          break;
+        default:
+          PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+                        ("FsFilter1!PreWrite: FltGetFileNameInformation Failed, status=%08x\n",
+                          status) );
+      }
+    }
+
+    return FLT_PREOP_SUCCESS_NO_CALLBACK;
+}
+
+FLT_PREOP_CALLBACK_STATUS
+FsFilter1PreReadOperation (
+    _Inout_ PFLT_CALLBACK_DATA Data,
+    _In_ PCFLT_RELATED_OBJECTS FltObjects,
+    _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
+    )
+{
+    NTSTATUS status;
+
+    UNREFERENCED_PARAMETER( FltObjects ); UNREFERENCED_PARAMETER( CompletionContext ); 
+
+    PFLT_FILE_NAME_INFORMATION FileNameInfo;
+    FLT_FILE_NAME_OPTIONS Options = FLT_FILE_NAME_NORMALIZED 
+      // Not Sure about this option
+      // It says it will query if safe not sure the circumstances when its not safe
+      | FLT_FILE_NAME_QUERY_DEFAULT;
+    status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
+    if (NT_SUCCESS(status)) {
+      PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+                    ("FsFilter1!PreRead: Name=%wZ\n",
+                     FileNameInfo->Name) );
+      FltReleaseFileNameInformation(FileNameInfo);
+    } else {
+      switch (status) {
+        case STATUS_FLT_INVALID_NAME_REQUEST:
+          PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
+                        ("FsFilter1!PreRead: FltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n") );
+          break;
+        default:
+          PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+                        ("FsFilter1!PreRead: FltGetFileNameInformation Failed, status=%08x\n",
                           status) );
       }
     }
@@ -544,7 +595,7 @@ Return Value:
 {
     UNREFERENCED_PARAMETER( FltObjects );
 
-    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
                   ("FsFilter1!FsFilter1OperationStatusCallback: Entered\n") );
 
     PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
@@ -596,57 +647,12 @@ Return Value:
     UNREFERENCED_PARAMETER( CompletionContext );
     UNREFERENCED_PARAMETER( Flags );
 
-    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+    PT_DBG_PRINT( PTDBG_TRACE_OPERATION_STATUS,
                   ("FsFilter1!FsFilter1PostOperation: Entered\n") );
 
     return FLT_POSTOP_FINISHED_PROCESSING;
 }
 
-
-FLT_PREOP_CALLBACK_STATUS
-FsFilter1PreOperationNoPostOperation (
-    _Inout_ PFLT_CALLBACK_DATA Data,
-    _In_ PCFLT_RELATED_OBJECTS FltObjects,
-    _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
-    )
-/*++
-
-Routine Description:
-
-    This routine is a pre-operation dispatch routine for this miniFilter.
-
-    This is non-pageable because it could be called on the paging path
-
-Arguments:
-
-    Data - Pointer to the filter callbackData that is passed to us.
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance, its associated volume and
-        file object.
-
-    CompletionContext - The context for the completion routine for this
-        operation.
-
-Return Value:
-
-    The return value is the status of the operation.
-
---*/
-{
-    UNREFERENCED_PARAMETER( Data );
-    UNREFERENCED_PARAMETER( FltObjects );
-    UNREFERENCED_PARAMETER( CompletionContext );
-
-    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                  ("FsFilter1!FsFilter1PreOperationNoPostOperation: Entered\n") );
-
-    // This template code does not do anything with the callbackData, but
-    // rather returns FLT_PREOP_SUCCESS_NO_CALLBACK.
-    // This passes the request down to the next miniFilter in the chain.
-
-    return FLT_PREOP_SUCCESS_NO_CALLBACK;
-}
 
 
 BOOLEAN

@@ -469,11 +469,9 @@ Return Value:
     NTSTATUS status;
 
     // UNREFERENCED_PARAMETER( Data );
-    UNREFERENCED_PARAMETER( FltObjects );
-    UNREFERENCED_PARAMETER( CompletionContext );
-
-    PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                  ("FsFilter1!FsFilter1PreOperation: Entered\n") );
+    UNREFERENCED_PARAMETER( FltObjects ); UNREFERENCED_PARAMETER( CompletionContext ); 
+    // PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+    //               ("FsFilter1!FsFilter1PreOperation: Entered\n") );
 
     PFLT_FILE_NAME_INFORMATION FileNameInfo;
     FLT_FILE_NAME_OPTIONS Options = FLT_FILE_NAME_NORMALIZED 
@@ -482,11 +480,21 @@ Return Value:
       | FLT_FILE_NAME_QUERY_DEFAULT;
     status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
     if (NT_SUCCESS(status)) {
+      PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+                    ("FsFilter1!FsFilter1PreOperation: FltGetFileNameInformation Name=%wZ\n",
+                     FileNameInfo->Name) );
       FltReleaseFileNameInformation(FileNameInfo);
     } else {
-      PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
-                    ("FsFilter1!FsFilter1PreOperation: FltGetFileNameInformation Failed, status=%08x\n",
-                      status) );
+      switch (status) {
+        case STATUS_FLT_INVALID_NAME_REQUEST:
+          PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+                        ("FsFilter1!FsFilter1PreOperation: FltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n") );
+          break;
+        default:
+          PT_DBG_PRINT( PTDBG_TRACE_ROUTINES,
+                        ("FsFilter1!FsFilter1PreOperation: FltGetFileNameInformation Failed, status=%08x\n",
+                          status) );
+      }
     }
 
     return FLT_PREOP_SUCCESS_NO_CALLBACK;

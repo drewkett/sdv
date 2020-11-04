@@ -479,9 +479,9 @@ FsFilter1PreOperation (
 
     PFLT_FILE_NAME_INFORMATION FileNameInfo;
     FLT_FILE_NAME_OPTIONS Options = FLT_FILE_NAME_NORMALIZED 
-      // Not Sure about this option
-      // It says it will query if safe not sure the circumstances when its not safe
-      | FLT_FILE_NAME_QUERY_DEFAULT;
+        // Not Sure about this option
+        // It says it will query if safe not sure the circumstances when its not safe
+        | FLT_FILE_NAME_QUERY_DEFAULT;
 
     // For MajorFunction meaning look at https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/ns-fltkernel-_flt_parameters
     // The value corresponds to the index into the union
@@ -491,30 +491,30 @@ FsFilter1PreOperation (
                     Data->Thread) );
     status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
     if (NT_SUCCESS(status)) {
-      PT_DBG_PRINT( TRACE_FILENAMES,
-                    ("FsFilter1!Pre(Op=%d): Name=%wZ\n",
-                    Data->Iopb->MajorFunction,
-                    FileNameInfo->Name) );
-      FltReleaseFileNameInformation(FileNameInfo);
+        PT_DBG_PRINT( TRACE_FILENAMES,
+                        ("FsFilter1!Pre(Op=%d): Name=%wZ\n",
+                        Data->Iopb->MajorFunction,
+                        FileNameInfo->Name) );
+        FltReleaseFileNameInformation(FileNameInfo);
     } else {
-      switch (status) {
-        case STATUS_FLT_INVALID_NAME_REQUEST:
-          PT_DBG_PRINT( TRACE_FILENAMES,
-                        ("FsFilter1!Pre(Op=%d): OpFltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n",
-                          Data->Iopb->MajorFunction
-                        ) );
-          break;
-        default:
-          PT_DBG_PRINT( TRACE_FILENAMES,
-                        ("FsFilter1!Pre(Op=%d): FltGetFileNameInformation Failed, status=0x%08x\n",
-                          Data->Iopb->MajorFunction,
-                          status) );
-      }
+        switch (status) {
+            case STATUS_FLT_INVALID_NAME_REQUEST:
+                PT_DBG_PRINT( TRACE_FILENAMES,
+                                ("FsFilter1!Pre(Op=%d): OpFltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n",
+                                Data->Iopb->MajorFunction
+                                ) );
+                break;
+            default:
+                PT_DBG_PRINT( TRACE_FILENAMES,
+                                ("FsFilter1!Pre(Op=%d): FltGetFileNameInformation Failed, status=0x%08x\n",
+                                Data->Iopb->MajorFunction,
+                                status) );
+        }
     }
     PT_DBG_PRINT( TRACE_THREADING,
-                  ("FsFilter1!Pre(Op=%d) End Thread=0x%08x\n",
-                    Data->Iopb->MajorFunction,
-                    Data->Thread) );
+        ("FsFilter1!Pre(Op=%d) End Thread=0x%08x\n",
+        Data->Iopb->MajorFunction,
+        Data->Thread) );
 
     return FLT_PREOP_SUCCESS_NO_CALLBACK;
 }

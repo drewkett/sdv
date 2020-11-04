@@ -75,10 +75,14 @@ impl Port {
                 &mut handle,
             )
         };
-        match result as u32 {
-            0 => Ok(Self { handle }),
-            0x80070005 => Err(Error::AccessDenied),
-            _ => Err(Error::ConnectError(result)),
+        use winapi::shared::winerror;
+        if winerror::SUCCEEDED(result) {
+            Ok(Self { handle })
+        } else {
+            match result {
+                winerror::E_ACCESSDENIED => Err(Error::AccessDenied),
+                _ => Err(Error::ConnectError(result)),
+            }
         }
     }
 

@@ -7,6 +7,10 @@ use winapi::um::fltuser;
 
 #[derive(Debug, Error)]
 enum Error {
+    #[error("Failed to start filter (0x{0:x})")]
+    FailedToStartFilter(i32),
+    #[error("Insufficient Privileges (0x{0:x})")]
+    InsufficientPrivileges(i32),
     #[error("Port Connection Error (0x{0:x})")]
     ConnectError(i32),
     #[error("Access Denied")]
@@ -107,8 +111,37 @@ impl Port {
     }
 }
 
+struct Filter {
+    name: Vec<u16>,
+}
+
+impl Filter {
+    fn load(filter_name: impl AsRef<OsStr>) -> Result<Self> {
+        use std::os::windows::prelude::*;
+        let name: Vec<_> = filter_name.as_ref().encode_wide().chain(Some(0)).collect();
+        let result = unsafe { fltuser::FilterLoad(name.as_ptr()) };
+        if winerror::SUCCEEDED(result) {
+            Ok(Self { name })
+        } else {
+            let code = winerror::HRESULT_CODE(result);
+            match code as u32 {
+                winerror::ERROR_PRIVILEGE_NOT_HELD => Err(Error::InsufficientPrivileges(result)),
+                _ => Err(Error::FailedToStartFilter(result)),
+            }
+        }
+    }
+}
+
+impl Drop for Filter {
+    fn drop(&mut self) {
+        // unsafe {}
+        let _res = unsafe { fltuser::FilterUnload(self.name.as_ptr()) };
+    }
+}
+
 fn _main() -> Result<()> {
-    use bstr::ByteSlice;
+    // Needs SeLoadDriverPrivilege permission on account to use, which just admin doesn't seem to have
+    // let _filter = Filter::load("fsfilter1")?;
     let mut port = Port::connect(r"\sdv_comms_port")?;
     loop {
         let message = port.get_message()?;

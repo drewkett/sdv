@@ -20,9 +20,10 @@ type Result<T> = std::result::Result<T, Error>;
 const BUFFER_TOTAL_SIZE: usize = 1024;
 const BUFFER_MSG_SIZE: usize =
     BUFFER_TOTAL_SIZE - std::mem::size_of::<fltuser::FILTER_MESSAGE_HEADER>();
+const BUFFER_MSG_WSIZE: usize = BUFFER_MSG_SIZE / 2;
 struct Message {
     header: fltuser::FILTER_MESSAGE_HEADER,
-    buffer: [u8; BUFFER_MSG_SIZE],
+    buffer: [u16; BUFFER_MSG_WSIZE],
 }
 
 impl Message {
@@ -32,7 +33,7 @@ impl Message {
                 ReplyLength: 0,
                 MessageId: 0,
             },
-            buffer: [0; BUFFER_MSG_SIZE],
+            buffer: [0; BUFFER_MSG_WSIZE],
         }
     }
 
@@ -40,20 +41,20 @@ impl Message {
         self as *mut Self as *mut fltuser::FILTER_MESSAGE_HEADER
     }
 
-    fn buffer(&self) -> Option<&[u8]> {
-        if self.header.ReplyLength == 0 {
-            None
-        } else {
-            let mut n = std::cmp::min(self.header.ReplyLength as usize, BUFFER_TOTAL_SIZE);
-            n = std::cmp::max(n, std::mem::size_of::<fltuser::FILTER_MESSAGE_HEADER>());
-            n -= std::mem::size_of::<fltuser::FILTER_MESSAGE_HEADER>();
-            Some(&self.buffer[..n])
-        }
+    fn buffer(&self) -> String {
+        unsafe { widestring::U16CStr::from_ptr_str(self.buffer.as_ptr()) }.to_string_lossy()
     }
 }
 
 struct Port {
     handle: HANDLE,
+}
+
+impl Drop for Port {
+    fn drop(&mut self) {
+        // unsafe {}
+        let _res = unsafe { winapi::um::handleapi::CloseHandle(self.handle) };
+    }
 }
 
 impl Port {
@@ -111,10 +112,7 @@ fn _main() -> Result<()> {
     let mut port = Port::connect(r"\sdv_comms_port")?;
     loop {
         let message = port.get_message()?;
-        match message.buffer() {
-            Some(m) => println!("MSG: {}", m.as_bstr()),
-            None => println!("EMPTY MSG"),
-        }
+        println!("MSG : {:?}", message.buffer());
     }
 }
 

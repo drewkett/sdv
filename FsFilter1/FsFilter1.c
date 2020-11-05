@@ -24,7 +24,8 @@ Environment:
 PFLT_FILTER gFilterHandle;
 PFLT_PORT gServerPort;
 PFLT_PORT gClientPort;
-ULONG_PTR OperationStatusCtx = 1;
+LARGE_INTEGER PortTimeout = { .QuadPart = -100 };
+#define BUFFER_LENGTH (1024 - 96)
 
 #define TRACE_FILENAMES            0x00000001
 #define TRACE_INIT    0x00000002
@@ -322,24 +323,24 @@ NTSTATUS PortConnectNotify (
       _Out_ PVOID *ConnectionPortCookie
       )
 {
-  UNREFERENCED_PARAMETER( ServerPortCookie );
-  UNREFERENCED_PARAMETER( ConnectionContext );
-  UNREFERENCED_PARAMETER( SizeOfContext );
-  UNREFERENCED_PARAMETER( ConnectionPortCookie );
-  PT_DBG_PRINT( TRACE_COMMS,
-                ("FsFilter1!PortConnectNotify\n") );
-  gClientPort = ClientPort;
-  return STATUS_SUCCESS;
+    UNREFERENCED_PARAMETER( ServerPortCookie );
+    UNREFERENCED_PARAMETER( ConnectionContext );
+    UNREFERENCED_PARAMETER( SizeOfContext );
+    UNREFERENCED_PARAMETER( ConnectionPortCookie );
+    PT_DBG_PRINT( TRACE_COMMS,
+                    ("FsFilter1!PortConnectNotify\n") );
+    gClientPort = ClientPort;
+    return STATUS_SUCCESS;
 }
 
 VOID PortDisconnectNotify (
       _In_ PVOID ConnectionCookie
       )
 {
-  UNREFERENCED_PARAMETER( ConnectionCookie );
-  PT_DBG_PRINT( TRACE_COMMS,
-                ("FsFilter1!PortDisconnectNotify\n") );
-  FltCloseClientPort(gFilterHandle,&gClientPort);
+    UNREFERENCED_PARAMETER( ConnectionCookie );
+    PT_DBG_PRINT( TRACE_COMMS,
+                    ("FsFilter1!PortDisconnectNotify\n") );
+    FltCloseClientPort(gFilterHandle,&gClientPort);
 }
 
 NTSTATUS
@@ -347,43 +348,38 @@ DriverEntry (
     _In_ PDRIVER_OBJECT DriverObject,
     _In_ PUNICODE_STRING RegistryPath
     )
-/*++
-
-Routine Description:
-
-    This is the initialization routine for this miniFilter driver.  This
-    registers with FltMgr and initializes all global data structures.
-
-Arguments:
-
-    DriverObject - Pointer to driver object created by the system to
-        represent this driver.
-
-    RegistryPath - Unicode string identifying where the parameters for this
-        driver are located in the registry.
-
-Return Value:
-
-    Routine can return non success error codes.
-
---*/
 {
     NTSTATUS status;
     UNICODE_STRING port_name;
     OBJECT_ATTRIBUTES attrs;
-
+    PSECURITY_DESCRIPTOR SecurityDescriptor;
 
     UNREFERENCED_PARAMETER( RegistryPath );
     PT_DBG_PRINT( TRACE_INIT,
                 ("FsFilter1!DriverEntry: Entered\n") );
 
-    //
-    //  Register with FltMgr to tell it our callback routines
-    //
-    status = RtlUnicodeStringInit(&port_name,L"\\sdv_comms_port\0");
+   status = RtlUnicodeStringInit(&port_name,L"\\sdv_comms_port\0");
     if (!NT_SUCCESS(status)) {
         PT_DBG_PRINT( TRACE_ALWAYS,
                         ("FsFilter1!DriverEntry: Error initializing port name ({})\n", status) );
+        return status;
+    }
+
+    status = FltRegisterFilter( DriverObject,
+                                &FilterRegistration,
+                                &gFilterHandle );
+
+    if (!NT_SUCCESS( status )) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                        ("FsFilter1!DriverEntry: Error registering filter ({})\n", status) );
+        return status;
+    }
+
+    status = FltBuildDefaultSecurityDescriptor(&SecurityDescriptor, FLT_PORT_ALL_ACCESS);
+    if (!NT_SUCCESS( status )) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                        ("FsFilter1!DriverEntry: Error building security descriptor ({})\n", status) );
+        FltUnregisterFilter( gFilterHandle );
         return status;
     }
 
@@ -392,35 +388,32 @@ Return Value:
         &port_name,
         OBJ_KERNEL_HANDLE,
         NULL, // RootDirectory (I think with leading '\' port name is full qualified)
-        NULL // Security Descriptor (Not currently dealing with security)
+        SecurityDescriptor // Security Descriptor (Not currently dealing with security)
     );
 
-    status = FltRegisterFilter( DriverObject,
-                                &FilterRegistration,
-                                &gFilterHandle );
+    status = FltCreateCommunicationPort(
+        gFilterHandle,
+        &gServerPort,
+        &attrs,
+        NULL, // ServerPortCookie
+        &PortConnectNotify,
+        &PortDisconnectNotify,
+        NULL, // MessageNotifyCallback,
+        1 // MaxConnections
+    );
+    FltFreeSecurityDescriptor(SecurityDescriptor);
+    if (!NT_SUCCESS( status )) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                        ("FsFilter1!DriverEntry: Error creating communication port ({})\n", status) );
+        FltUnregisterFilter( gFilterHandle );
+        return status;
+    }
+    status = FltStartFiltering( gFilterHandle );
 
-    FLT_ASSERT( NT_SUCCESS( status ) );
-
-    if (NT_SUCCESS( status )) {
-        status = FltCreateCommunicationPort(
-            gFilterHandle,
-            &gServerPort,
-            &attrs,
-            NULL, // ServerPortCookie
-            &PortConnectNotify,
-            &PortDisconnectNotify,
-            NULL, // MessageNotifyCallback,
-            1 // MaxConnections
-        );
-        if (!NT_SUCCESS( status )) {
-            FltUnregisterFilter( gFilterHandle );
-            return status;
-        }
-        status = FltStartFiltering( gFilterHandle );
-
-        if (!NT_SUCCESS( status )) {
-            FltUnregisterFilter( gFilterHandle );
-        }
+    if (!NT_SUCCESS( status )) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                        ("FsFilter1!DriverEntry: Error staring filter ({})\n", status) );
+        FltUnregisterFilter( gFilterHandle );
     }
 
     return status;
@@ -430,24 +423,6 @@ NTSTATUS
 FsFilter1Unload (
     _In_ FLT_FILTER_UNLOAD_FLAGS Flags
     )
-/*++
-
-Routine Description:
-
-    This is the unload routine for this miniFilter driver. This is called
-    when the minifilter is about to be unloaded. We can fail this unload
-    request if this is not a mandatory unload indicated by the Flags
-    parameter.
-
-Arguments:
-
-    Flags - Indicating if this is a mandatory unload.
-
-Return Value:
-
-    Returns STATUS_SUCCESS.
-
---*/
 {
     UNREFERENCED_PARAMETER( Flags );
 
@@ -474,6 +449,7 @@ FsFilter1PreOperation (
     )
 {
     NTSTATUS status;
+    unsigned char buffer[BUFFER_LENGTH];
 
     UNREFERENCED_PARAMETER( FltObjects ); UNREFERENCED_PARAMETER( CompletionContext ); 
 
@@ -495,6 +471,34 @@ FsFilter1PreOperation (
                         ("FsFilter1!Pre(Op=%d): Name=%wZ\n",
                         Data->Iopb->MajorFunction,
                         FileNameInfo->Name) );
+        if (gClientPort != NULL) {
+            status = RtlStringCbCopyUnicodeString((NTSTRSAFE_PWSTR) buffer,BUFFER_LENGTH,&FileNameInfo->Name);
+            if (NT_SUCCESS(status)) {
+                status = FltSendMessage(
+                    gFilterHandle,
+                    &gClientPort,
+                    buffer, // SenderBuffer
+                    BUFFER_LENGTH, // SenderBufferLength
+                    NULL, // ReplyBuffer
+                    0, // ReplyLength
+                    &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
+                );
+                if (!NT_SUCCESS(status)) {
+                    PT_DBG_PRINT( TRACE_COMMS,
+                                    ("FsFilter1!Pre(Op=%d): Failed to send message to client (0x%08x)\n",
+                                    Data->Iopb->MajorFunction,
+                                    status
+                                    ) );
+                }
+            } else {
+                PT_DBG_PRINT( TRACE_ALWAYS,
+                                ("FsFilter1!Pre(Op=%d): Failed to copy filename to message buffer (0x%08x)\n",
+                                Data->Iopb->MajorFunction,
+                                status
+                                ) );
+
+            }
+        }
         FltReleaseFileNameInformation(FileNameInfo);
     } else {
         switch (status) {

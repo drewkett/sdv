@@ -25,6 +25,7 @@ PFLT_FILTER gFilterHandle;
 PFLT_PORT gServerPort;
 PFLT_PORT gClientPort;
 LARGE_INTEGER PortTimeout = { .QuadPart = -100 };
+// #define TRACK_THREADS
 #define BUFFER_LENGTH (1024 - 96)
 
 #define TRACE_FILENAMES            0x00000001
@@ -35,7 +36,7 @@ LARGE_INTEGER PortTimeout = { .QuadPart = -100 };
 #define TRACE_PROC            0x00000020
 #define TRACE_ALWAYS    0xFFFFFFFF
 
-ULONG gTraceFlags = TRACE_INIT|TRACE_COMMS|TRACE_PROC|TRACE_FILENAMES;
+ULONG gTraceFlags = TRACE_INIT|TRACE_COMMS|TRACE_PROC;
 
 
 #define PT_DBG_PRINT( _dbgLevel, _string )          \
@@ -354,6 +355,7 @@ void ProcessCreateCallback(
 }
 
 
+#ifdef TRACK_THREADS
 void ThreadCreateCallback(
   _In_ HANDLE ProcessId,
   _In_ HANDLE ThreadId,
@@ -362,6 +364,7 @@ void ThreadCreateCallback(
     PT_DBG_PRINT( TRACE_PROC,
                     ("FsFilter1!ThreadCreateCallback  ProcessId=%6d ThreadId= %6d Create=%d\n", ProcessId, ThreadId, Create) );
 }
+#endif
 
 NTSTATUS
 DriverEntry (
@@ -435,29 +438,38 @@ DriverEntry (
         goto e_port;
     }
 
+#ifdef TRACK_THREADS
     status = PsSetCreateThreadNotifyRoutine( ThreadCreateCallback );
     if (!NT_SUCCESS( status )) {
         PT_DBG_PRINT( TRACE_ALWAYS,
                         ("FsFilter1!DriverEntry: Error registering thread callback ({})\n", status) );
         goto e_process;
     }
+#endif
 
     status = FltStartFiltering( gFilterHandle );
 
     if (!NT_SUCCESS( status )) {
         PT_DBG_PRINT( TRACE_ALWAYS,
                         ("FsFilter1!DriverEntry: Error staring filter ({})\n", status) );
+#ifdef TRACK_THREADS
         goto e_thread;
+#else
+        goto e_process;
+#endif
     }
 
     return status;
 
+#ifdef TRACk_THREADdd
 e_thread: 
     status = PsRemoveCreateThreadNotifyRoutine( ThreadCreateCallback );
     if (!NT_SUCCESS (status) ) {
         PT_DBG_PRINT( TRACE_ALWAYS,
                     ("FsFilter1!FsFilter1Unload: Failed to unregistrer thread create callback\n") );
     }
+#endif
+
 e_process:
     status = PsSetCreateProcessNotifyRoutine( ProcessCreateCallback, TRUE );
     if (!NT_SUCCESS (status) ) {
@@ -486,11 +498,13 @@ FsFilter1Unload (
     PT_DBG_PRINT( TRACE_INIT,
                   ("FsFilter1!FsFilter1Unload: Entered\n") );
 
+#ifdef TRACK_THREADS
     status = PsRemoveCreateThreadNotifyRoutine( ThreadCreateCallback );
     if (!NT_SUCCESS (status) ) {
         PT_DBG_PRINT( TRACE_ALWAYS,
                     ("FsFilter1!FsFilter1Unload: Failed to unregistrer thread create callback\n") );
     }
+#endif
     
     status = PsSetCreateProcessNotifyRoutine( ProcessCreateCallback, TRUE );
     if (!NT_SUCCESS (status) ) {

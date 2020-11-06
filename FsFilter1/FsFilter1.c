@@ -32,9 +32,10 @@ LARGE_INTEGER PortTimeout = { .QuadPart = -100 };
 #define TRACE_COMMS    0x00000004
 #define TRACE_ERRORS    0x00000008
 #define TRACE_THREADING            0x00000010
+#define TRACE_PROC            0x00000020
 #define TRACE_ALWAYS    0xFFFFFFFF
 
-ULONG gTraceFlags = TRACE_INIT|TRACE_COMMS;
+ULONG gTraceFlags = TRACE_INIT|TRACE_COMMS|TRACE_PROC|TRACE_FILENAMES;
 
 
 #define PT_DBG_PRINT( _dbgLevel, _string )          \
@@ -343,6 +344,25 @@ VOID PortDisconnectNotify (
     FltCloseClientPort(gFilterHandle,&gClientPort);
 }
 
+void ProcessCreateCallback(
+  _In_ HANDLE ParentId,
+  _In_ HANDLE ProcessId,
+  _In_ BOOLEAN Create
+) {
+    PT_DBG_PRINT( TRACE_PROC,
+                    ("FsFilter1!ProcessCreateCallback ParentId= %p ProcessId=%p Create=%d\n", ParentId, ProcessId, Create) );
+}
+
+
+void ThreadCreateCallback(
+  _In_ HANDLE ProcessId,
+  _In_ HANDLE ThreadId,
+  _In_ BOOLEAN Create
+) {
+    PT_DBG_PRINT( TRACE_PROC,
+                    ("FsFilter1!ThreadCreateCallback  ProcessId=%p ThreadId= %p Create=%d\n", ProcessId, ThreadId, Create) );
+}
+
 NTSTATUS
 DriverEntry (
     _In_ PDRIVER_OBJECT DriverObject,
@@ -350,6 +370,7 @@ DriverEntry (
     )
 {
     NTSTATUS status;
+    // TODO Not Sure if this should be on stack
     UNICODE_STRING port_name;
     OBJECT_ATTRIBUTES attrs;
     PSECURITY_DESCRIPTOR SecurityDescriptor;
@@ -372,15 +393,14 @@ DriverEntry (
     if (!NT_SUCCESS( status )) {
         PT_DBG_PRINT( TRACE_ALWAYS,
                         ("FsFilter1!DriverEntry: Error registering filter ({})\n", status) );
-        return status;
+        goto e_end;
     }
 
     status = FltBuildDefaultSecurityDescriptor(&SecurityDescriptor, FLT_PORT_ALL_ACCESS);
     if (!NT_SUCCESS( status )) {
         PT_DBG_PRINT( TRACE_ALWAYS,
                         ("FsFilter1!DriverEntry: Error building security descriptor ({})\n", status) );
-        FltUnregisterFilter( gFilterHandle );
-        return status;
+        goto e_filter;
     }
 
     InitializeObjectAttributes(
@@ -405,17 +425,50 @@ DriverEntry (
     if (!NT_SUCCESS( status )) {
         PT_DBG_PRINT( TRACE_ALWAYS,
                         ("FsFilter1!DriverEntry: Error creating communication port ({})\n", status) );
-        FltUnregisterFilter( gFilterHandle );
-        return status;
+        goto e_filter;
     }
+
+    status = PsSetCreateProcessNotifyRoutine( ProcessCreateCallback, FALSE );
+    if (!NT_SUCCESS( status )) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                        ("FsFilter1!DriverEntry: Error registering process callback ({})\n", status) );
+        goto e_port;
+    }
+
+    status = PsSetCreateThreadNotifyRoutine( ThreadCreateCallback );
+    if (!NT_SUCCESS( status )) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                        ("FsFilter1!DriverEntry: Error registering thread callback ({})\n", status) );
+        goto e_process;
+    }
+
     status = FltStartFiltering( gFilterHandle );
 
     if (!NT_SUCCESS( status )) {
         PT_DBG_PRINT( TRACE_ALWAYS,
                         ("FsFilter1!DriverEntry: Error staring filter ({})\n", status) );
-        FltUnregisterFilter( gFilterHandle );
+        goto e_thread;
     }
 
+    return status;
+
+e_thread: 
+    status = PsRemoveCreateThreadNotifyRoutine( ThreadCreateCallback );
+    if (!NT_SUCCESS (status) ) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                    ("FsFilter1!FsFilter1Unload: Failed to unregistrer thread create callback\n") );
+    }
+e_process:
+    status = PsSetCreateProcessNotifyRoutine( ProcessCreateCallback, TRUE );
+    if (!NT_SUCCESS (status) ) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                    ("FsFilter1!FsFilter1Unload: Failed to unregistrer process create callback\n") );
+    }
+e_port:
+    FltCloseCommunicationPort( gServerPort );
+e_filter:
+    FltUnregisterFilter( gFilterHandle );
+e_end:
     return status;
 }
 
@@ -424,6 +477,8 @@ FsFilter1Unload (
     _In_ FLT_FILTER_UNLOAD_FLAGS Flags
     )
 {
+    NTSTATUS status;
+
     UNREFERENCED_PARAMETER( Flags );
 
     PAGED_CODE();
@@ -431,7 +486,20 @@ FsFilter1Unload (
     PT_DBG_PRINT( TRACE_INIT,
                   ("FsFilter1!FsFilter1Unload: Entered\n") );
 
+    status = PsRemoveCreateThreadNotifyRoutine( ThreadCreateCallback );
+    if (!NT_SUCCESS (status) ) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                    ("FsFilter1!FsFilter1Unload: Failed to unregistrer thread create callback\n") );
+    }
+    
+    status = PsSetCreateProcessNotifyRoutine( ProcessCreateCallback, TRUE );
+    if (!NT_SUCCESS (status) ) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                    ("FsFilter1!FsFilter1Unload: Failed to unregistrer process create callback\n") );
+    }
+
     FltCloseCommunicationPort( gServerPort );
+
     FltUnregisterFilter( gFilterHandle );
 
     return STATUS_SUCCESS;
@@ -462,13 +530,14 @@ FsFilter1PreOperation (
     // For MajorFunction meaning look at https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/ns-fltkernel-_flt_parameters
     // The value corresponds to the index into the union
     PT_DBG_PRINT( TRACE_THREADING,
-                  ("FsFilter1!Pre(Op=%d) Start Thread=0x%08x\n",
+                  ("FsFilter1!Pre(Op=%d) Start Thread=%p\n",
                     Data->Iopb->MajorFunction,
                     Data->Thread) );
     status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
     if (NT_SUCCESS(status)) {
         PT_DBG_PRINT( TRACE_FILENAMES,
-                        ("FsFilter1!Pre(Op=%d): Name=%wZ\n",
+                        ("FsFilter1!Pre(Op=%d): Thread=%p Name=%wZ\n",
+                        Data->Thread,
                         Data->Iopb->MajorFunction,
                         FileNameInfo->Name) );
         if (gClientPort != NULL) {
@@ -516,7 +585,7 @@ FsFilter1PreOperation (
         }
     }
     PT_DBG_PRINT( TRACE_THREADING,
-        ("FsFilter1!Pre(Op=%d) End Thread=0x%08x\n",
+        ("FsFilter1!Pre(Op=%d) End Thread=%p\n",
         Data->Iopb->MajorFunction,
         Data->Thread) );
 

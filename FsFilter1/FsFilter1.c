@@ -517,17 +517,21 @@ FsFilter1PreOperation (
     )
 {
     NTSTATUS status;
+    PEPROCESS pProcess;
+    HANDLE ThreadId, ProcessId;
     unsigned char buffer[BUFFER_LENGTH];
-
-    UNREFERENCED_PARAMETER( FltObjects ); UNREFERENCED_PARAMETER( CompletionContext ); 
-
     PFLT_FILE_NAME_INFORMATION FileNameInfo;
-    FLT_FILE_NAME_OPTIONS Options = FLT_FILE_NAME_NORMALIZED 
+    FLT_FILE_NAME_OPTIONS Options;
+
+    UNREFERENCED_PARAMETER( FltObjects );
+    UNREFERENCED_PARAMETER( CompletionContext ); 
+
+    Options = FLT_FILE_NAME_NORMALIZED 
         // Not Sure about this option
         // It says it will query if safe not sure the circumstances when its not safe
         | FLT_FILE_NAME_QUERY_DEFAULT;
 
-    HANDLE ThreadId    = PsGetThreadId(Data->Thread);
+    ThreadId    = PsGetThreadId(Data->Thread);
     // For MajorFunction meaning look at https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/ns-fltkernel-_flt_parameters
     // The value corresponds to the index into the union
     PT_DBG_PRINT( TRACE_THREADING,
@@ -537,14 +541,14 @@ FsFilter1PreOperation (
     status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
     if (NT_SUCCESS(status)) {
         
-        PEPROCESS objCurProcess = IoThreadToProcess( Data->Thread );
-        HANDLE iCurProcID    = PsGetProcessId(objCurProcess);
+        pProcess = IoThreadToProcess( Data->Thread );
+        ProcessId = PsGetProcessId(pProcess);
 
         PT_DBG_PRINT( TRACE_FILENAMES,
                         ("FsFilter1!Pre(Op=%d): ThreadId=%6d ProcessId=%6d Name=%wZ\n",
                         Data->Iopb->MajorFunction,
                         ThreadId,
-                        iCurProcID,
+                        ProcessId,
                         FileNameInfo->Name) );
         if (gClientPort != NULL) {
             status = RtlStringCbCopyUnicodeString((NTSTRSAFE_PWSTR) buffer,BUFFER_LENGTH,&FileNameInfo->Name);

@@ -1,9 +1,16 @@
+use std::convert::TryFrom;
 use std::ffi::OsStr;
 
 use thiserror::Error;
 use winapi::shared::ntdef::HANDLE;
 use winapi::shared::winerror;
 use winapi::um::fltuser;
+
+#[allow(non_snake_case)]
+#[allow(dead_code)]
+mod bindings {
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
 
 #[derive(Debug, Error)]
 enum Error {
@@ -17,36 +24,60 @@ enum Error {
     AccessDenied,
     #[error("Get Message Error (0x{0:x})")]
     GetMessageError(i32),
+    #[error("Unknown Message Variant ({0})")]
+    UnknownMessageVariant(u16),
+    #[error("Invalid Message Filename Length ({0})")]
+    InvalidMessageFileNameLength(usize),
 }
 
 type Result<T> = std::result::Result<T, Error>;
 
-const BUFFER_TOTAL_SIZE: usize = 1024;
-const BUFFER_MSG_SIZE: usize =
-    BUFFER_TOTAL_SIZE - std::mem::size_of::<fltuser::FILTER_MESSAGE_HEADER>();
-const BUFFER_MSG_WSIZE: usize = BUFFER_MSG_SIZE / 2;
-struct Message {
-    header: fltuser::FILTER_MESSAGE_HEADER,
-    buffer: [u16; BUFFER_MSG_WSIZE],
+#[derive(Debug)]
+enum Message {
+    Empty,
+    File(String),
 }
 
-impl Message {
-    fn empty() -> Self {
-        Self {
-            header: fltuser::FILTER_MESSAGE_HEADER {
-                ReplyLength: 0,
-                MessageId: 0,
-            },
-            buffer: [0; BUFFER_MSG_WSIZE],
+impl TryFrom<bindings::Message> for Message {
+    type Error = Error;
+    fn try_from(m: bindings::Message) -> Result<Self> {
+        match m.Kind {
+            0 => Ok(Message::Empty),
+            1 => {
+                let f = unsafe { m.Data.file };
+                let n = f.WideLength as usize;
+                let buffer = f.Buffer;
+                if n > buffer.len() {
+                    Err(Error::InvalidMessageFileNameLength(n))
+                } else {
+                    let s = unsafe { widestring::U16Str::from_ptr(buffer.as_ptr(), n) }
+                        .to_string_lossy();
+                    Ok(Message::File(s))
+                }
+            }
+            _ => Err(Error::UnknownMessageVariant(m.Kind)),
         }
     }
+}
 
+#[repr(C)]
+struct CompleteMessage {
+    header: fltuser::FILTER_MESSAGE_HEADER,
+    message: bindings::Message,
+}
+
+#[test]
+fn test_sizes() {
+    assert_eq!(
+        ::std::mem::size_of::<CompleteMessage>(),
+        bindings::MESSAGE_TOTAL_SIZE_WITH_HEADER as usize,
+        concat!("Size of: ", stringify!(CompleteMessage))
+    );
+}
+
+impl CompleteMessage {
     fn as_header(&mut self) -> *mut fltuser::FILTER_MESSAGE_HEADER {
         self as *mut Self as *mut fltuser::FILTER_MESSAGE_HEADER
-    }
-
-    fn buffer(&self) -> String {
-        unsafe { widestring::U16CStr::from_ptr_str(self.buffer.as_ptr()) }.to_string_lossy()
     }
 }
 
@@ -91,20 +122,20 @@ impl Port {
         }
     }
 
-    fn get_message(&mut self) -> Result<Box<Message>> {
-        let mut message: Box<Message> = Box::new(Message::empty());
+    fn get_message(&mut self) -> Result<Message> {
+        let mut raw_message: Box<CompleteMessage> = Box::new(unsafe { std::mem::zeroed() });
         let overlapped = std::ptr::null_mut();
         debug_assert!(std::mem::size_of::<Message>() < u32::MAX as usize);
         let result = unsafe {
             fltuser::FilterGetMessage(
                 self.handle,
-                message.as_header(),
-                std::mem::size_of::<Message>() as u32,
+                raw_message.as_header(),
+                std::mem::size_of::<CompleteMessage>() as u32,
                 overlapped,
             )
         };
         if winerror::SUCCEEDED(result) {
-            Ok(message)
+            Message::try_from(raw_message.message)
         } else {
             Err(Error::GetMessageError(result))
         }
@@ -145,7 +176,7 @@ fn _main() -> Result<()> {
     let mut port = Port::connect(r"\sdv_comms_port")?;
     loop {
         let message = port.get_message()?;
-        println!("MSG : {:?}", message.buffer());
+        println!("MSG : {:?}", message);
     }
 }
 

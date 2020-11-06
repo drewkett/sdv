@@ -20,6 +20,13 @@ Environment:
 
 #pragma prefast(disable:__WARNING_ENCODE_MEMBER_FUNCTION_POINTER, "Not valid for kernel mode drivers")
 
+#include "FsFilter1.h"
+
+struct CompleteMessage {
+    FILTER_MESSAGE_HEADER header;
+    struct Message message;
+};
+static_assert (sizeof(struct CompleteMessage)  == MESSAGE_TOTAL_SIZE_WITH_HEADER, "CompleteMessage is wrong size");
 
 PFLT_FILTER gFilterHandle;
 PFLT_PORT gServerPort;
@@ -167,29 +174,6 @@ FsFilter1InstanceSetup (
     _In_ DEVICE_TYPE VolumeDeviceType,
     _In_ FLT_FILESYSTEM_TYPE VolumeFilesystemType
     )
-/*++
-
-Routine Description:
-
-    This routine is called whenever a new instance is created on a volume. This
-    gives us a chance to decide if we need to attach to this volume or not.
-
-    If this routine is not defined in the registration structure, automatic
-    instances are always created.
-
-Arguments:
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance and its associated volume.
-
-    Flags - Flags describing the reason for this attach request.
-
-Return Value:
-
-    STATUS_SUCCESS - attach
-    STATUS_FLT_DO_NOT_ATTACH - do not attach
-
---*/
 {
     UNREFERENCED_PARAMETER( FltObjects );
     UNREFERENCED_PARAMETER( Flags );
@@ -210,30 +194,6 @@ FsFilter1InstanceQueryTeardown (
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _In_ FLT_INSTANCE_QUERY_TEARDOWN_FLAGS Flags
     )
-/*++
-
-Routine Description:
-
-    This is called when an instance is being manually deleted by a
-    call to FltDetachVolume or FilterDetach thereby giving us a
-    chance to fail that detach request.
-
-    If this routine is not defined in the registration structure, explicit
-    detach requests via FltDetachVolume or FilterDetach will always be
-    failed.
-
-Arguments:
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance and its associated volume.
-
-    Flags - Indicating where this detach request came from.
-
-Return Value:
-
-    Returns the status of this operation.
-
---*/
 {
     UNREFERENCED_PARAMETER( FltObjects );
     UNREFERENCED_PARAMETER( Flags );
@@ -252,24 +212,6 @@ FsFilter1InstanceTeardownStart (
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _In_ FLT_INSTANCE_TEARDOWN_FLAGS Flags
     )
-/*++
-
-Routine Description:
-
-    This routine is called at the start of instance teardown.
-
-Arguments:
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance and its associated volume.
-
-    Flags - Reason why this instance is being deleted.
-
-Return Value:
-
-    None.
-
---*/
 {
     UNREFERENCED_PARAMETER( FltObjects );
     UNREFERENCED_PARAMETER( Flags );
@@ -286,24 +228,6 @@ FsFilter1InstanceTeardownComplete (
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _In_ FLT_INSTANCE_TEARDOWN_FLAGS Flags
     )
-/*++
-
-Routine Description:
-
-    This routine is called at the end of instance teardown.
-
-Arguments:
-
-    FltObjects - Pointer to the FLT_RELATED_OBJECTS data structure containing
-        opaque handles to this filter, instance and its associated volume.
-
-    Flags - Reason why this instance is being deleted.
-
-Return Value:
-
-    None.
-
---*/
 {
     UNREFERENCED_PARAMETER( FltObjects );
     UNREFERENCED_PARAMETER( Flags );
@@ -533,7 +457,7 @@ FsFilter1PreOperation (
     NTSTATUS status;
     PEPROCESS pProcess;
     HANDLE ThreadId, ProcessId;
-    unsigned char buffer[BUFFER_LENGTH];
+    struct Message message;
     PFLT_FILE_NAME_INFORMATION FileNameInfo;
     FLT_FILE_NAME_OPTIONS Options;
 
@@ -565,13 +489,16 @@ FsFilter1PreOperation (
                         ProcessId,
                         FileNameInfo->Name) );
         if (gClientPort != NULL) {
-            status = RtlStringCbCopyUnicodeString((NTSTRSAFE_PWSTR) buffer,BUFFER_LENGTH,&FileNameInfo->Name);
-            if (NT_SUCCESS(status)) {
+            message.Kind = 1;
+            unsigned int n = min(FileNameInfo->Name.Length,MESSAGE_FILE_BUFFER_SIZE);
+            message.Data.file.WideLength = (unsigned short) n / 2;
+            errno_t err = memcpy_s(message.Data.file.Buffer, MESSAGE_FILE_BUFFER_SIZE, FileNameInfo->Name.Buffer, n);
+            if (err == 0) {
                 status = FltSendMessage(
                     gFilterHandle,
                     &gClientPort,
-                    buffer, // SenderBuffer
-                    BUFFER_LENGTH, // SenderBufferLength
+                    &message, // SenderBuffer
+                    MESSAGE_TOTAL_SIZE, // SenderBufferLength
                     NULL, // ReplyBuffer
                     0, // ReplyLength
                     &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout

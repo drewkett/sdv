@@ -342,3 +342,4 @@ healthchecksdb
 # Added by cargo
 
 /target
+!/src/bin

@@ -350,7 +350,7 @@ void ProcessCreateCallback(
   _In_ BOOLEAN Create
 ) {
     PT_DBG_PRINT( TRACE_PROC,
-                    ("FsFilter1!ProcessCreateCallback ParentId= %p ProcessId=%p Create=%d\n", ParentId, ProcessId, Create) );
+                    ("FsFilter1!ProcessCreateCallback ParentId= %6d ProcessId=%6d Create=%d\n", ParentId, ProcessId, Create) );
 }
 
 
@@ -360,7 +360,7 @@ void ThreadCreateCallback(
   _In_ BOOLEAN Create
 ) {
     PT_DBG_PRINT( TRACE_PROC,
-                    ("FsFilter1!ThreadCreateCallback  ProcessId=%p ThreadId= %p Create=%d\n", ProcessId, ThreadId, Create) );
+                    ("FsFilter1!ThreadCreateCallback  ProcessId=%6d ThreadId= %6d Create=%d\n", ProcessId, ThreadId, Create) );
 }
 
 NTSTATUS
@@ -527,25 +527,23 @@ FsFilter1PreOperation (
         // It says it will query if safe not sure the circumstances when its not safe
         | FLT_FILE_NAME_QUERY_DEFAULT;
 
+    HANDLE ThreadId    = PsGetThreadId(Data->Thread);
     // For MajorFunction meaning look at https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/ns-fltkernel-_flt_parameters
     // The value corresponds to the index into the union
     PT_DBG_PRINT( TRACE_THREADING,
-                  ("FsFilter1!Pre(Op=%d) Start Thread=%p\n",
+                  ("FsFilter1!Pre(Op=%d) Start ThreadId=%6d\n",
                     Data->Iopb->MajorFunction,
-                    Data->Thread) );
+                    ThreadId) );
     status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
     if (NT_SUCCESS(status)) {
         
-        HANDLE ThreadId    = PsGetThreadId(Data->Thread);
         PEPROCESS objCurProcess = IoThreadToProcess( Data->Thread );
         HANDLE iCurProcID    = PsGetProcessId(objCurProcess);
 
         PT_DBG_PRINT( TRACE_FILENAMES,
-                        ("FsFilter1!Pre(Op=%d): Thread=%p ThreadId=%p Process=%p ProcessId=%p Name=%wZ\n",
+                        ("FsFilter1!Pre(Op=%d): ThreadId=%6d ProcessId=%6d Name=%wZ\n",
                         Data->Iopb->MajorFunction,
-                        Data->Thread,
                         ThreadId,
-                        objCurProcess,
                         iCurProcID,
                         FileNameInfo->Name) );
         if (gClientPort != NULL) {

@@ -535,10 +535,18 @@ FsFilter1PreOperation (
                     Data->Thread) );
     status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
     if (NT_SUCCESS(status)) {
+        
+        HANDLE ThreadId    = PsGetThreadId(Data->Thread);
+        PEPROCESS objCurProcess = IoThreadToProcess( Data->Thread );
+        HANDLE iCurProcID    = PsGetProcessId(objCurProcess);
+
         PT_DBG_PRINT( TRACE_FILENAMES,
-                        ("FsFilter1!Pre(Op=%d): Thread=%p Name=%wZ\n",
-                        Data->Thread,
+                        ("FsFilter1!Pre(Op=%d): Thread=%p ThreadId=%p Process=%p ProcessId=%p Name=%wZ\n",
                         Data->Iopb->MajorFunction,
+                        Data->Thread,
+                        ThreadId,
+                        objCurProcess,
+                        iCurProcID,
                         FileNameInfo->Name) );
         if (gClientPort != NULL) {
             status = RtlStringCbCopyUnicodeString((NTSTRSAFE_PWSTR) buffer,BUFFER_LENGTH,&FileNameInfo->Name);

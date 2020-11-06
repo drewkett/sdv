@@ -43,7 +43,7 @@ LARGE_INTEGER PortTimeout = { .QuadPart = -100 };
 #define TRACE_PROC            0x00000020
 #define TRACE_ALWAYS    0xFFFFFFFF
 
-ULONG gTraceFlags = TRACE_INIT|TRACE_COMMS|TRACE_PROC;
+ULONG gTraceFlags = TRACE_INIT|TRACE_COMMS;
 
 
 #define PT_DBG_PRINT( _dbgLevel, _string )          \
@@ -270,12 +270,57 @@ VOID PortDisconnectNotify (
 }
 
 void ProcessCreateCallback(
-  _In_ HANDLE ParentId,
-  _In_ HANDLE ProcessId,
+  _In_ HANDLE HParentId,
+  _In_ HANDLE HProcessId,
   _In_ BOOLEAN Create
 ) {
+    NTSTATUS status;
+    struct Message message;
+    unsigned long ProcessId = 0, ParentId = 0;
+    ProcessId += (long long) HProcessId & 0xFFFFFFFF;
+    ParentId += (long long) HParentId & 0xFFFFFFFF;
+
     PT_DBG_PRINT( TRACE_PROC,
-                    ("FsFilter1!ProcessCreateCallback ParentId= %6d ProcessId=%6d Create=%d\n", ParentId, ProcessId, Create) );
+                    ("FsFilter1!ProcessCreateCallback ParentId= %6d/%6d ProcessId=%6d/%6d Create=%d\n", HParentId, ParentId, HProcessId, ProcessId, Create) );
+
+    if (gClientPort != NULL) {
+        message.Kind = MessageKind_Process;
+
+        message.Data.process.ProcessId = ProcessId;
+        message.Data.process.ParentId = ParentId;
+        message.Data.process.Create = Create;
+        for (int i = 0; i < 3; i++) {
+            status = FltSendMessage(
+                gFilterHandle,
+                &gClientPort,
+                &message, // SenderBuffer
+                MESSAGE_TOTAL_SIZE, // SenderBufferLength
+                NULL, // ReplyBuffer
+                0, // ReplyLength
+                &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
+            );
+            if (status == STATUS_THREAD_IS_TERMINATING) {
+                PT_DBG_PRINT( TRACE_COMMS, (
+                    "FsFilter1!ProcCreate: Failed to send message to client. Might retry (Thread is terminating)\n"
+                ));
+                // Retry if this error code is received
+                continue;
+            }
+            break;
+        }
+        if (!NT_SUCCESS(status)) {
+            if (status == STATUS_THREAD_IS_TERMINATING) {
+                PT_DBG_PRINT( TRACE_COMMS, (
+                    "FsFilter1!ProcCreate: Failed to send message to client (Thread is terminating)\n"
+                ));
+            } else {
+                PT_DBG_PRINT( TRACE_COMMS, (
+                    "FsFilter1!ProcCreate: Failed to send message to client (0x%08x)\n",
+                    status
+                ));
+            }
+        }
+    }
 }
 
 
@@ -306,11 +351,11 @@ DriverEntry (
     PT_DBG_PRINT( TRACE_INIT,
                 ("FsFilter1!DriverEntry: Entered\n") );
 
-   status = RtlUnicodeStringInit(&port_name,L"\\sdv_comms_port\0");
+    status = RtlUnicodeStringInit(&port_name,L"\\sdv_comms_port\0");
     if (!NT_SUCCESS(status)) {
         PT_DBG_PRINT( TRACE_ALWAYS,
                         ("FsFilter1!DriverEntry: Error initializing port name ({})\n", status) );
-        return status;
+        goto e_end;
     }
 
     status = FltRegisterFilter( DriverObject,
@@ -489,7 +534,7 @@ FsFilter1PreOperation (
                         ProcessId,
                         FileNameInfo->Name) );
         if (gClientPort != NULL) {
-            message.Kind = 1;
+            message.Kind = MessageKind_File;
             unsigned int n = min(FileNameInfo->Name.Length,MESSAGE_FILE_BUFFER_SIZE);
             message.Data.file.WideLength = (unsigned short) n / 2;
             errno_t err = memcpy_s(message.Data.file.Buffer, MESSAGE_FILE_BUFFER_SIZE, FileNameInfo->Name.Buffer, n);

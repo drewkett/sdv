@@ -8,6 +8,7 @@ use winapi::um::fltuser;
 
 #[allow(non_snake_case)]
 #[allow(dead_code)]
+#[allow(non_upper_case_globals)]
 mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
@@ -24,8 +25,10 @@ enum Error {
     AccessDenied,
     #[error("Get Message Error (0x{0:x})")]
     GetMessageError(i32),
+    #[error("Invalid Message Variant)")]
+    InvalidMessageVariant,
     #[error("Unknown Message Variant ({0})")]
-    UnknownMessageVariant(u16),
+    UnknownMessageVariant(i32),
     #[error("Invalid Message Filename Length ({0})")]
     InvalidMessageFileNameLength(usize),
 }
@@ -36,14 +39,20 @@ type Result<T> = std::result::Result<T, Error>;
 enum Message {
     Empty,
     File(String),
+    Process {
+        process_id: u32,
+        parent_id: u32,
+        create: bool,
+    },
 }
 
 impl TryFrom<bindings::Message> for Message {
     type Error = Error;
     fn try_from(m: bindings::Message) -> Result<Self> {
         match m.Kind {
-            0 => Ok(Message::Empty),
-            1 => {
+            bindings::MessageKind_MessageKind_Invalid => Err(Error::InvalidMessageVariant),
+            bindings::MessageKind_MessageKind_Empty => Ok(Message::Empty),
+            bindings::MessageKind_MessageKind_File => {
                 let f = unsafe { m.Data.file };
                 let n = f.WideLength as usize;
                 let buffer = f.Buffer;
@@ -54,6 +63,14 @@ impl TryFrom<bindings::Message> for Message {
                         .to_string_lossy();
                     Ok(Message::File(s))
                 }
+            }
+            bindings::MessageKind_MessageKind_Process => {
+                let p = unsafe { m.Data.process };
+                Ok(Message::Process {
+                    process_id: p.ProcessId,
+                    parent_id: p.ParentId,
+                    create: p.Create != 0,
+                })
             }
             _ => Err(Error::UnknownMessageVariant(m.Kind)),
         }
@@ -176,7 +193,18 @@ fn _main() -> Result<()> {
     let mut port = Port::connect(r"\sdv_comms_port")?;
     loop {
         let message = port.get_message()?;
-        println!("MSG : {:?}", message);
+        if let Message::Process {
+            process_id,
+            parent_id,
+            create,
+        } = message
+        {
+            println!(
+                "Process : process_id={:?} parent_id={} create={}",
+                process_id, parent_id, create
+            );
+        }
+        // println!("MSG : {:?}", message);
     }
 }
 

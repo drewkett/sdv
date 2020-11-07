@@ -319,9 +319,9 @@ void ProcessCreateCallback(
     if (gClientPort != NULL) {
         message.Kind = MessageKind_Process;
 
-        message.Data.process.ProcessId = ProcessId;
-        message.Data.process.ParentId = ParentId;
-        message.Data.process.Create = Create;
+        message.Data.Process.ProcessId = ProcessId;
+        message.Data.Process.ParentId = ParentId;
+        message.Data.Process.Create = Create;
         status = FltSendMessage(
             gFilterHandle,
             &gClientPort,
@@ -346,9 +346,9 @@ void ProcessCreateCallback(
                         ));
                     } else {
                         pmessage->Kind = MessageKind_Process;
-                        pmessage->Data.process.ProcessId = ProcessId;
-                        pmessage->Data.process.ParentId = ParentId;
-                        pmessage->Data.process.Create = Create;
+                        pmessage->Data.Process.ProcessId = ProcessId;
+                        pmessage->Data.Process.ParentId = ParentId;
+                        pmessage->Data.Process.Create = Create;
                         IoQueueWorkItem(
                             WorkItem,
                             &WorkItemSendMessage,
@@ -605,10 +605,11 @@ FsFilter1PreOperation (
                         FileNameInfo->Name) );
         if (gClientPort != NULL) {
             message.Kind = MessageKind_File;
-            message.Data.file.ProcessId = IdFromHandle(ProcessId);
+            message.Data.File.Attr.ProcessId = IdFromHandle(ProcessId);
+            message.Data.File.Attr.MajorFunction = Data->Iopb->MajorFunction;
             unsigned int n = min(FileNameInfo->Name.Length,MESSAGE_FILE_BUFFER_SIZE);
-            message.Data.file.WideLength = (unsigned short) n / 2;
-            errno_t err = memcpy_s(message.Data.file.Buffer, MESSAGE_FILE_BUFFER_SIZE, FileNameInfo->Name.Buffer, n);
+            message.Data.File.Attr.WideLength = (unsigned short) n / 2;
+            errno_t err = memcpy_s(message.Data.File.Buffer, MESSAGE_FILE_BUFFER_SIZE, FileNameInfo->Name.Buffer, n);
             if (err == 0) {
                 status = FltSendMessage(
                     gFilterHandle,

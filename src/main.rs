@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::convert::TryInto;
 use std::ffi::OsStr;
 
 use thiserror::Error;
@@ -29,6 +30,8 @@ enum Error {
     InvalidMessageVariant,
     #[error("Unknown Message Variant ({0})")]
     UnknownMessageVariant(i32),
+    #[error("Unknown Major Function ({0})")]
+    UnknownMajorFunction(u8),
     #[error("Invalid Message Filename Length ({0})")]
     InvalidMessageFileNameLength(usize),
 }
@@ -36,10 +39,32 @@ enum Error {
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
+#[repr(u8)]
+enum MajorFunction {
+    Create = bindings::MajorFunction_Create as u8,
+    Read = bindings::MajorFunction_Read as u8,
+    Write = bindings::MajorFunction_Write as u8,
+}
+
+impl TryFrom<u8> for MajorFunction {
+    type Error = Error;
+
+    fn try_from(v: u8) -> Result<Self> {
+        match v {
+            x if x == Self::Create as u8 => Ok(Self::Create),
+            x if x == Self::Read as u8 => Ok(Self::Read),
+            x if x == Self::Write as u8 => Ok(Self::Write),
+            _ => Err(Error::UnknownMajorFunction(v)),
+        }
+    }
+}
+
+#[derive(Debug)]
 enum Message {
     Empty,
     File {
         process_id: u32,
+        major_function: MajorFunction,
         filename: String,
     },
     Process {
@@ -56,8 +81,8 @@ impl TryFrom<bindings::Message> for Message {
             bindings::MessageKind_MessageKind_Invalid => Err(Error::InvalidMessageVariant),
             bindings::MessageKind_MessageKind_Empty => Ok(Message::Empty),
             bindings::MessageKind_MessageKind_File => {
-                let f = unsafe { m.Data.file };
-                let n = f.WideLength as usize;
+                let f = unsafe { m.Data.File };
+                let n = f.Attr.WideLength as usize;
                 let buffer = f.Buffer;
                 if n > buffer.len() {
                     Err(Error::InvalidMessageFileNameLength(n))
@@ -65,13 +90,14 @@ impl TryFrom<bindings::Message> for Message {
                     let filename = unsafe { widestring::U16Str::from_ptr(buffer.as_ptr(), n) }
                         .to_string_lossy();
                     Ok(Message::File {
-                        process_id: f.ProcessId,
+                        process_id: f.Attr.ProcessId,
+                        major_function: f.Attr.MajorFunction.try_into()?,
                         filename,
                     })
                 }
             }
             bindings::MessageKind_MessageKind_Process => {
-                let p = unsafe { m.Data.process };
+                let p = unsafe { m.Data.Process };
                 Ok(Message::Process {
                     process_id: p.ProcessId,
                     parent_id: p.ParentId,
@@ -202,9 +228,13 @@ fn _main() -> Result<()> {
         match message {
             Message::File {
                 process_id,
+                major_function,
                 filename,
             } => {
-                println!("File : process_id={:5} filename={}", process_id, filename);
+                println!(
+                    "File {:?} : process_id={:5} filename={}",
+                    major_function, process_id, filename
+                );
             }
             Message::Process {
                 process_id,

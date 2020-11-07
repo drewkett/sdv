@@ -2,8 +2,6 @@
 // FILTER_MESSAGE_HEADER size is 16
 #define MESSAGE_TOTAL_SIZE (MESSAGE_TOTAL_SIZE_WITH_HEADER -  16)
 #define MESSAGE_STRUCT_SIZE (MESSAGE_TOTAL_SIZE - sizeof(int))
-#define MESSAGE_FILE_BUFFER_SIZE (MESSAGE_STRUCT_SIZE - sizeof(unsigned long) - sizeof(unsigned short))
-#define MESSAGE_FILE_BUFFER_WSIZE (MESSAGE_FILE_BUFFER_SIZE / 2)
 
 enum MessageKind {
     MessageKind_Invalid,
@@ -12,13 +10,25 @@ enum MessageKind {
     MessageKind_Process
 };
 
+#define MajorFunction_Create 0
+#define MajorFunction_Read 3
+#define MajorFunction_Write 4
+
 struct EmptyMessage {
     unsigned char Buffer[MESSAGE_STRUCT_SIZE];
 };
 
-struct FileMessage {
+struct FileMessageAttr {
     unsigned long ProcessId;
+    unsigned char MajorFunction;
     unsigned short WideLength;
+};
+
+#define MESSAGE_FILE_BUFFER_SIZE (MESSAGE_STRUCT_SIZE - sizeof(struct FileMessageAttr))
+#define MESSAGE_FILE_BUFFER_WSIZE (MESSAGE_FILE_BUFFER_SIZE / 2)
+
+struct FileMessage {
+    struct FileMessageAttr Attr;
     unsigned short Buffer[MESSAGE_FILE_BUFFER_WSIZE];
 };
 
@@ -32,10 +42,10 @@ struct ProcessMessage {
 struct Message {
     int Kind;
     union {
-        struct EmptyMessage invalid;
-        struct EmptyMessage empty;
-        struct FileMessage file;
-        struct ProcessMessage process;
+        struct EmptyMessage Invalid;
+        struct EmptyMessage Empty;
+        struct FileMessage File;
+        struct ProcessMessage Process;
     } Data;
 };
 

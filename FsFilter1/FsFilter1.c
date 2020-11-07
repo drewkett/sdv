@@ -295,6 +295,13 @@ void WorkItemSendMessage(
     ExFreePool(Context);
 }
 
+unsigned long IdFromHandle(HANDLE HId) 
+{
+    unsigned long Id = 0;
+    Id += (long long) HId & 0xFFFFFFFF;
+    return Id;
+}
+
 void ProcessCreateCallback(
     _In_ HANDLE HParentId,
     _In_ HANDLE HProcessId,
@@ -302,10 +309,9 @@ void ProcessCreateCallback(
 ) {
     NTSTATUS status;
     struct Message message, *pmessage;
-    unsigned long ProcessId = 0, ParentId = 0;
     PIO_WORKITEM WorkItem;
-    ProcessId += (long long) HProcessId & 0xFFFFFFFF;
-    ParentId += (long long) HParentId & 0xFFFFFFFF;
+    unsigned long ProcessId = IdFromHandle(HProcessId);
+    unsigned long ParentId = IdFromHandle(HParentId);
 
     PT_DBG_PRINT( TRACE_PROC,
                     ("FsFilter1!ProcessCreateCallback ParentId= %6d/%6d ProcessId=%6d/%6d Create=%d\n", HParentId, ParentId, HProcessId, ProcessId, Create) );
@@ -599,6 +605,7 @@ FsFilter1PreOperation (
                         FileNameInfo->Name) );
         if (gClientPort != NULL) {
             message.Kind = MessageKind_File;
+            message.Data.file.ProcessId = IdFromHandle(ProcessId);
             unsigned int n = min(FileNameInfo->Name.Length,MESSAGE_FILE_BUFFER_SIZE);
             message.Data.file.WideLength = (unsigned short) n / 2;
             errno_t err = memcpy_s(message.Data.file.Buffer, MESSAGE_FILE_BUFFER_SIZE, FileNameInfo->Name.Buffer, n);

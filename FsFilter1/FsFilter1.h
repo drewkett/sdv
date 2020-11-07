@@ -1,8 +1,8 @@
 #define MESSAGE_TOTAL_SIZE_WITH_HEADER 1024
 // FILTER_MESSAGE_HEADER size is 16
 #define MESSAGE_TOTAL_SIZE (MESSAGE_TOTAL_SIZE_WITH_HEADER -  16)
-#define MESSAGE_STRUCT_SIZE (MESSAGE_TOTAL_SIZE - sizeof(unsigned int))
-#define MESSAGE_FILE_BUFFER_SIZE (MESSAGE_STRUCT_SIZE - sizeof(unsigned short))
+#define MESSAGE_STRUCT_SIZE (MESSAGE_TOTAL_SIZE - sizeof(int))
+#define MESSAGE_FILE_BUFFER_SIZE (MESSAGE_STRUCT_SIZE - sizeof(unsigned long) - sizeof(unsigned short))
 #define MESSAGE_FILE_BUFFER_WSIZE (MESSAGE_FILE_BUFFER_SIZE / 2)
 
 enum MessageKind {
@@ -17,6 +17,7 @@ struct EmptyMessage {
 };
 
 struct FileMessage {
+    unsigned long ProcessId;
     unsigned short WideLength;
     unsigned short Buffer[MESSAGE_FILE_BUFFER_WSIZE];
 };

@@ -38,7 +38,10 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug)]
 enum Message {
     Empty,
-    File(String),
+    File {
+        process_id: u32,
+        filename: String,
+    },
     Process {
         process_id: u32,
         parent_id: u32,
@@ -59,9 +62,12 @@ impl TryFrom<bindings::Message> for Message {
                 if n > buffer.len() {
                     Err(Error::InvalidMessageFileNameLength(n))
                 } else {
-                    let s = unsafe { widestring::U16Str::from_ptr(buffer.as_ptr(), n) }
+                    let filename = unsafe { widestring::U16Str::from_ptr(buffer.as_ptr(), n) }
                         .to_string_lossy();
-                    Ok(Message::File(s))
+                    Ok(Message::File {
+                        process_id: f.ProcessId,
+                        filename,
+                    })
                 }
             }
             bindings::MessageKind_MessageKind_Process => {
@@ -193,18 +199,25 @@ fn _main() -> Result<()> {
     let mut port = Port::connect(r"\sdv_comms_port")?;
     loop {
         let message = port.get_message()?;
-        if let Message::Process {
-            process_id,
-            parent_id,
-            create,
-        } = message
-        {
-            println!(
-                "Process : parent_id={:5} process_id={:5} create={}",
-                process_id, parent_id, create
-            );
+        match message {
+            Message::File {
+                process_id,
+                filename,
+            } => {
+                println!("File : process_id={:5} filename={}", process_id, filename);
+            }
+            Message::Process {
+                process_id,
+                parent_id,
+                create,
+            } => {
+                println!(
+                    "Process : parent_id={:5} process_id={:5} create={}",
+                    process_id, parent_id, create
+                );
+            }
+            _ => println!("MSG : {:?}", message),
         }
-        // println!("MSG : {:?}", message);
     }
 }
 

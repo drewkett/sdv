@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::ffi::OsStr;
@@ -223,6 +224,7 @@ fn _main() -> Result<()> {
     // Needs SeLoadDriverPrivilege permission on account to use, which just admin doesn't seem to have
     // let _filter = Filter::load("fsfilter1")?;
     let mut port = Port::connect(r"\sdv_comms_port")?;
+    let mut map = HashMap::<u32, (u32, HashMap<String, (bool, bool)>)>::new();
     loop {
         let message = port.get_message()?;
         match message {
@@ -231,10 +233,26 @@ fn _main() -> Result<()> {
                 major_function,
                 filename,
             } => {
-                println!(
-                    "File {:?} : process_id={:5} filename={}",
-                    major_function, process_id, filename
-                );
+                match map.get_mut(&process_id) {
+                    Some((_parent_id, filemap)) => {
+                        let mut entry = filemap.entry(filename).or_insert((false, false));
+                        match major_function {
+                            MajorFunction::Read => (entry.0 = true),
+                            MajorFunction::Write => (entry.1 = true),
+                            MajorFunction::Create => {}
+                        }
+                    }
+                    None => {
+                        //     eprintln!(
+                        //     "Process {} not found in map for file operation {}",
+                        //     process_id, filename
+                        // )
+                    }
+                }
+                // println!(
+                //     "File {:?} : process_id={:5} filename={}",
+                //     major_function, process_id, filename
+                // );
             }
             Message::Process {
                 process_id,
@@ -245,6 +263,34 @@ fn _main() -> Result<()> {
                     "Process : parent_id={:5} process_id={:5} create={}",
                     process_id, parent_id, create
                 );
+                if create {
+                    match map.insert(process_id, (parent_id, HashMap::new())) {
+                        // Not sure if i shoudl replace the existing or not
+                        Some((parent_id, _)) => eprintln!(
+                            "Process {} already in map (Parent {})",
+                            process_id, parent_id
+                        ),
+                        None => {}
+                    }
+                } else {
+                    match map.remove(&process_id) {
+                        Some((parent_id, filemap)) => {
+                            println!("Process {} finished (Parent {})", process_id, parent_id);
+                            for (filename, (read, write)) in filemap.iter() {
+                                if *read && *write {
+                                    println!("IO : {}", filename);
+                                } else if *read {
+                                    println!("I  : {}", filename);
+                                } else if *write {
+                                    println!(" O : {}", filename);
+                                } else {
+                                    println!("   : {}", filename);
+                                }
+                            }
+                        }
+                        None => eprintln!("Process {} not found in map", process_id),
+                    }
+                }
             }
             _ => println!("MSG : {:?}", message),
         }

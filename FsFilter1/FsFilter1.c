@@ -292,7 +292,7 @@ void WorkItemSendMessage(
             status
         ));
     }
-
+    ExFreePool(Context);
 }
 
 void ProcessCreateCallback(
@@ -350,7 +350,7 @@ void ProcessCreateCallback(
                             pmessage
                         );
                         PT_DBG_PRINT( TRACE_COMMS, (
-                            "FsFilter1!ProcCreate: Queued message for later"
+                            "FsFilter1!ProcCreate: Queued message for later\n"
                         ));
                     }
                 }

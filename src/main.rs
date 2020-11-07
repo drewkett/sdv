@@ -200,7 +200,7 @@ fn _main() -> Result<()> {
         } = message
         {
             println!(
-                "Process : process_id={:?} parent_id={} create={}",
+                "Process : parent_id={:5} process_id={:5} create={}",
                 process_id, parent_id, create
             );
         }

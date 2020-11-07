@@ -29,6 +29,7 @@ struct CompleteMessage {
 static_assert (sizeof(struct CompleteMessage)  == MESSAGE_TOTAL_SIZE_WITH_HEADER, "CompleteMessage is wrong size");
 
 PFLT_FILTER gFilterHandle;
+PDEVICE_OBJECT gDeviceObject;
 PFLT_PORT gServerPort;
 PFLT_PORT gClientPort;
 LARGE_INTEGER PortTimeout = { .QuadPart = -100 };
@@ -269,14 +270,40 @@ VOID PortDisconnectNotify (
     FltCloseClientPort(gFilterHandle,&gClientPort);
 }
 
+void WorkItemSendMessage(
+    PDEVICE_OBJECT DeviceObject,
+    PVOID Context
+)
+{
+    UNREFERENCED_PARAMETER( DeviceObject );
+    NTSTATUS status;
+    status = FltSendMessage(
+        gFilterHandle,
+        &gClientPort,
+        Context, // SenderBuffer
+        MESSAGE_TOTAL_SIZE, // SenderBufferLength
+        NULL, // ReplyBuffer
+        0, // ReplyLength
+        &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
+    );
+    if (!NT_SUCCESS(status)) {
+        PT_DBG_PRINT( TRACE_COMMS, (
+            "FsFilter1!WorkItemSendMessage: Failed to send message to client (0x%08x)\n",
+            status
+        ));
+    }
+
+}
+
 void ProcessCreateCallback(
-  _In_ HANDLE HParentId,
-  _In_ HANDLE HProcessId,
-  _In_ BOOLEAN Create
+    _In_ HANDLE HParentId,
+    _In_ HANDLE HProcessId,
+    _In_ BOOLEAN Create
 ) {
     NTSTATUS status;
-    struct Message message;
+    struct Message message, *pmessage;
     unsigned long ProcessId = 0, ParentId = 0;
+    PIO_WORKITEM WorkItem;
     ProcessId += (long long) HProcessId & 0xFFFFFFFF;
     ParentId += (long long) HParentId & 0xFFFFFFFF;
 
@@ -289,30 +316,44 @@ void ProcessCreateCallback(
         message.Data.process.ProcessId = ProcessId;
         message.Data.process.ParentId = ParentId;
         message.Data.process.Create = Create;
-        for (int i = 0; i < 3; i++) {
-            status = FltSendMessage(
-                gFilterHandle,
-                &gClientPort,
-                &message, // SenderBuffer
-                MESSAGE_TOTAL_SIZE, // SenderBufferLength
-                NULL, // ReplyBuffer
-                0, // ReplyLength
-                &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
-            );
-            if (status == STATUS_THREAD_IS_TERMINATING) {
-                PT_DBG_PRINT( TRACE_COMMS, (
-                    "FsFilter1!ProcCreate: Failed to send message to client. Might retry (Thread is terminating)\n"
-                ));
-                // Retry if this error code is received
-                continue;
-            }
-            break;
-        }
+        status = FltSendMessage(
+            gFilterHandle,
+            &gClientPort,
+            &message, // SenderBuffer
+            MESSAGE_TOTAL_SIZE, // SenderBufferLength
+            NULL, // ReplyBuffer
+            0, // ReplyLength
+            &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
+        );
         if (!NT_SUCCESS(status)) {
             if (status == STATUS_THREAD_IS_TERMINATING) {
-                PT_DBG_PRINT( TRACE_COMMS, (
-                    "FsFilter1!ProcCreate: Failed to send message to client (Thread is terminating)\n"
-                ));
+                WorkItem = IoAllocateWorkItem(gDeviceObject);
+                if (WorkItem == NULL) {
+                    PT_DBG_PRINT( TRACE_COMMS, (
+                        "FsFilter1!ProcCreate: Failed to alloc work item after failing to send message to client (Thread is terminating)\n"
+                    ));
+                } else {
+                    pmessage = ExAllocatePoolWithTag(NonPagedPool, sizeof(struct Message), 'MSGW');
+                    if (pmessage == NULL) {
+                        PT_DBG_PRINT( TRACE_COMMS, (
+                            "FsFilter1!ProcCreate: Failed to alloc message after failing to send message to client (Thread is terminating)\n"
+                        ));
+                    } else {
+                        pmessage->Kind = MessageKind_Process;
+                        pmessage->Data.process.ProcessId = ProcessId;
+                        pmessage->Data.process.ParentId = ParentId;
+                        pmessage->Data.process.Create = Create;
+                        IoQueueWorkItem(
+                            WorkItem,
+                            &WorkItemSendMessage,
+                            DelayedWorkQueue,
+                            pmessage
+                        );
+                        PT_DBG_PRINT( TRACE_COMMS, (
+                            "FsFilter1!ProcCreate: Queued message for later"
+                        ));
+                    }
+                }
             } else {
                 PT_DBG_PRINT( TRACE_COMMS, (
                     "FsFilter1!ProcCreate: Failed to send message to client (0x%08x)\n",
@@ -330,8 +371,12 @@ void ThreadCreateCallback(
   _In_ HANDLE ThreadId,
   _In_ BOOLEAN Create
 ) {
-    PT_DBG_PRINT( TRACE_PROC,
-                    ("FsFilter1!ThreadCreateCallback  ProcessId=%6d ThreadId= %6d Create=%d\n", ProcessId, ThreadId, Create) );
+    PT_DBG_PRINT( TRACE_PROC, (
+        "FsFilter1!ThreadCreateCallback  ProcessId=%6d ThreadId= %6d Create=%d\n",
+        ProcessId,
+        ThreadId,
+        Create
+    ) );
 }
 #endif
 
@@ -358,6 +403,21 @@ DriverEntry (
         goto e_end;
     }
 
+    status = IoCreateDevice(
+        DriverObject,
+        0, // This is probably wrong DeviceExtensionSize,
+        NULL, // Device Name
+        0x00000015, // FILE_DEVICE_NULL
+        FILE_DEVICE_SECURE_OPEN, // DeviceCharacteristics
+        FALSE,  // Exclusive?
+        &gDeviceObject
+    );
+    if (!NT_SUCCESS(status)) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                        ("FsFilter1!DriverEntry: Error creating device ({})\n", status) );
+        goto e_end;
+    }
+
     status = FltRegisterFilter( DriverObject,
                                 &FilterRegistration,
                                 &gFilterHandle );
@@ -365,7 +425,7 @@ DriverEntry (
     if (!NT_SUCCESS( status )) {
         PT_DBG_PRINT( TRACE_ALWAYS,
                         ("FsFilter1!DriverEntry: Error registering filter ({})\n", status) );
-        goto e_end;
+        goto e_device;
     }
 
     status = FltBuildDefaultSecurityDescriptor(&SecurityDescriptor, FLT_PORT_ALL_ACCESS);
@@ -449,6 +509,8 @@ e_port:
     FltCloseCommunicationPort( gServerPort );
 e_filter:
     FltUnregisterFilter( gFilterHandle );
+e_device:
+    IoDeleteDevice( gDeviceObject );
 e_end:
     return status;
 }
@@ -484,6 +546,8 @@ FsFilter1Unload (
     FltCloseCommunicationPort( gServerPort );
 
     FltUnregisterFilter( gFilterHandle );
+
+    IoDeleteDevice( gDeviceObject );
 
     return STATUS_SUCCESS;
 }

@@ -326,6 +326,12 @@ void ProcessCreateCallback(
 
     if (gClientPort != NULL) {
         PContext = ExAllocatePoolWithTag(NonPagedPool, sizeof(struct WorkItemContext), POOL_TAG);
+        if (PContext == NULL) {
+            PT_DBG_PRINT( TRACE_COMMS, (
+                "FsFilter1!ProcCreate: Failed to alloc context\n"
+            ));
+            return;
+        }
         PContext->Message.Kind = MessageKind_Process;
 
         PContext->Message.Data.Process.ProcessId = ProcessId;
@@ -370,6 +376,69 @@ void ProcessCreateCallback(
         }
     }
 }
+
+void ImageLoadCallback(
+    _In_ PUNICODE_STRING FullImageName,
+    _In_ HANDLE HProcessId,
+    _In_ PIMAGE_INFO ImageInfo
+) {
+    UNREFERENCED_PARAMETER( ImageInfo );
+    NTSTATUS status;
+    struct WorkItemContext *PContext;
+    unsigned long ProcessId = IdFromHandle(HProcessId);
+
+    PT_DBG_PRINT( TRACE_PROC, (
+        "FsFilter1!ImageLoad: ProcessId=%6d/%6d ImageName=%wZ\n",
+        HProcessId,
+        ProcessId,
+        FullImageName
+    ));
+
+    if (gClientPort != NULL) {
+        PContext = ExAllocatePoolWithTag(NonPagedPool, sizeof(struct WorkItemContext), POOL_TAG);
+        if (PContext == NULL) {
+            PT_DBG_PRINT( TRACE_COMMS, (
+                "FsFilter1!ImageLoad: Failed to alloc context\n"
+            ));
+            return;
+        }
+        PContext->Message.Kind = MessageKind_Image;
+        PContext->Message.Data.Image.Attr.ProcessId = ProcessId;
+        errno_t err = 0;
+        if (FullImageName != NULL) {
+            unsigned int n = min(FullImageName->Length,MESSAGE_IMAGE_BUFFER_SIZE);
+            PContext->Message.Data.Image.Attr.WideLength = (unsigned short) n / 2;
+            err = memcpy_s(PContext->Message.Data.Image.Buffer, MESSAGE_IMAGE_BUFFER_SIZE, FullImageName->Buffer, n);
+        } else {
+            PContext->Message.Data.Image.Attr.WideLength = 0;
+        }
+        if (err == 0) {
+            status = FltSendMessage(
+                gFilterHandle,
+                &gClientPort,
+                PContext, // SenderBuffer
+                MESSAGE_TOTAL_SIZE, // SenderBufferLength
+                NULL, // ReplyBuffer
+                0, // ReplyLength
+                &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
+            );
+            if (!NT_SUCCESS(status)) {
+                PT_DBG_PRINT( TRACE_COMMS, (
+                    "FsFilter1!ImageLoad: Failed to send message to client (0x%08x)\n",
+                    status
+                ));
+            }
+        } else {
+            PT_DBG_PRINT( TRACE_ALWAYS, (
+                "FsFilter1!ImageLoad: Failed to copy filename to message buffer (%d)\n",
+                err
+            ));
+
+        }
+        ExFreePoolWithTag(PContext, POOL_TAG);
+    }
+}
+
 
 
 #ifdef TRACK_THREADS
@@ -474,12 +543,19 @@ DriverEntry (
         goto e_port;
     }
 
+    status = PsSetLoadImageNotifyRoutine( ImageLoadCallback );
+    if (!NT_SUCCESS( status )) {
+        PT_DBG_PRINT( TRACE_ALWAYS,
+                        ("FsFilter1!DriverEntry: Error registering image load callback ({})\n", status) );
+        goto e_process;
+    }
+
 #ifdef TRACK_THREADS
     status = PsSetCreateThreadNotifyRoutine( ThreadCreateCallback );
     if (!NT_SUCCESS( status )) {
         PT_DBG_PRINT( TRACE_ALWAYS,
                         ("FsFilter1!DriverEntry: Error registering thread callback ({})\n", status) );
-        goto e_process;
+        goto e_image;
     }
 #endif
 
@@ -491,7 +567,7 @@ DriverEntry (
 #ifdef TRACK_THREADS
         goto e_thread;
 #else
-        goto e_process;
+        goto e_image;
 #endif
     }
 
@@ -506,11 +582,19 @@ e_thread:
     }
 #endif
 
+e_image:
+    status = PsRemoveLoadImageNotifyRoutine( ImageLoadCallback );
+    if (!NT_SUCCESS (status) ) {
+        PT_DBG_PRINT( TRACE_ALWAYS, (
+            "FsFilter1!FsFilter1Unload: Failed to unregistrer image load callback\n"
+        ));
+    }
 e_process:
     status = PsSetCreateProcessNotifyRoutine( ProcessCreateCallback, TRUE );
     if (!NT_SUCCESS (status) ) {
-        PT_DBG_PRINT( TRACE_ALWAYS,
-                    ("FsFilter1!FsFilter1Unload: Failed to unregistrer process create callback\n") );
+        PT_DBG_PRINT( TRACE_ALWAYS, (
+            "FsFilter1!FsFilter1Unload: Failed to unregistrer process create callback\n"
+        ));
     }
 e_port:
     FltCloseCommunicationPort( gServerPort );
@@ -543,11 +627,19 @@ FsFilter1Unload (
                     ("FsFilter1!FsFilter1Unload: Failed to unregistrer thread create callback\n") );
     }
 #endif
+
+    status = PsRemoveLoadImageNotifyRoutine( ImageLoadCallback );
+    if (!NT_SUCCESS (status) ) {
+        PT_DBG_PRINT( TRACE_ALWAYS, (
+            "FsFilter1!FsFilter1Unload: Failed to unregistrer image load callback\n"
+        ));
+    }
     
     status = PsSetCreateProcessNotifyRoutine( ProcessCreateCallback, TRUE );
     if (!NT_SUCCESS (status) ) {
-        PT_DBG_PRINT( TRACE_ALWAYS,
-                    ("FsFilter1!FsFilter1Unload: Failed to unregistrer process create callback\n") );
+        PT_DBG_PRINT( TRACE_ALWAYS, (
+            "FsFilter1!FsFilter1Unload: Failed to unregistrer process create callback\n"
+        ));
     }
 
     FltCloseCommunicationPort( gServerPort );
@@ -588,22 +680,24 @@ FsFilter1PreOperation (
     ThreadId    = PsGetThreadId(Data->Thread);
     // For MajorFunction meaning look at https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/ns-fltkernel-_flt_parameters
     // The value corresponds to the index into the union
-    PT_DBG_PRINT( TRACE_THREADING,
-                  ("FsFilter1!Pre(Op=%d) Start ThreadId=%6d\n",
-                    Data->Iopb->MajorFunction,
-                    ThreadId) );
+    PT_DBG_PRINT( TRACE_THREADING, (
+        "FsFilter1!Pre(Op=%d) Start ThreadId=%6d\n",
+        Data->Iopb->MajorFunction,
+        ThreadId
+    ));
     status = FltGetFileNameInformation( Data, Options, &FileNameInfo );
     if (NT_SUCCESS(status)) {
         
         pProcess = IoThreadToProcess( Data->Thread );
         ProcessId = PsGetProcessId(pProcess);
 
-        PT_DBG_PRINT( TRACE_FILENAMES,
-                        ("FsFilter1!Pre(Op=%d): ThreadId=%6d ProcessId=%6d Name=%wZ\n",
-                        Data->Iopb->MajorFunction,
-                        ThreadId,
-                        ProcessId,
-                        FileNameInfo->Name) );
+        PT_DBG_PRINT( TRACE_FILENAMES, (
+            "FsFilter1!Pre(Op=%d): ThreadId=%6d ProcessId=%6d Name=%wZ\n",
+            Data->Iopb->MajorFunction,
+            ThreadId,
+            ProcessId,
+            FileNameInfo->Name
+        ));
         if (gClientPort != NULL) {
             message.Kind = MessageKind_File;
             message.Data.File.Attr.ProcessId = IdFromHandle(ProcessId);
@@ -622,41 +716,42 @@ FsFilter1PreOperation (
                     &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
                 );
                 if (!NT_SUCCESS(status)) {
-                    PT_DBG_PRINT( TRACE_COMMS,
-                                    ("FsFilter1!Pre(Op=%d): Failed to send message to client (0x%08x)\n",
-                                    Data->Iopb->MajorFunction,
-                                    status
-                                    ) );
+                    PT_DBG_PRINT( TRACE_COMMS, (
+                        "FsFilter1!Pre(Op=%d): Failed to send message to client (0x%08x)\n",
+                        Data->Iopb->MajorFunction,
+                        status
+                    ));
                 }
             } else {
-                PT_DBG_PRINT( TRACE_ALWAYS,
-                                ("FsFilter1!Pre(Op=%d): Failed to copy filename to message buffer (0x%08x)\n",
-                                Data->Iopb->MajorFunction,
-                                status
-                                ) );
-
+                PT_DBG_PRINT( TRACE_ALWAYS, (
+                    "FsFilter1!Pre(Op=%d): Failed to copy filename to message buffer (%d)\n",
+                    Data->Iopb->MajorFunction,
+                    err
+                ));
             }
         }
         FltReleaseFileNameInformation(FileNameInfo);
     } else {
         switch (status) {
             case STATUS_FLT_INVALID_NAME_REQUEST:
-                PT_DBG_PRINT( TRACE_FILENAMES,
-                                ("FsFilter1!Pre(Op=%d): OpFltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n",
-                                Data->Iopb->MajorFunction
-                                ) );
+                PT_DBG_PRINT( TRACE_FILENAMES, (
+                    "FsFilter1!Pre(Op=%d): OpFltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n",
+                    Data->Iopb->MajorFunction
+                ) );
                 break;
             default:
-                PT_DBG_PRINT( TRACE_FILENAMES,
-                                ("FsFilter1!Pre(Op=%d): FltGetFileNameInformation Failed, status=0x%08x\n",
-                                Data->Iopb->MajorFunction,
-                                status) );
+                PT_DBG_PRINT( TRACE_FILENAMES, (
+                    "FsFilter1!Pre(Op=%d): FltGetFileNameInformation Failed, status=0x%08x\n",
+                    Data->Iopb->MajorFunction,
+                    status
+                ));
         }
     }
-    PT_DBG_PRINT( TRACE_THREADING,
-        ("FsFilter1!Pre(Op=%d) End Thread=%p\n",
+    PT_DBG_PRINT( TRACE_THREADING, (
+        "FsFilter1!Pre(Op=%d) End Thread=%p\n",
         Data->Iopb->MajorFunction,
-        Data->Thread) );
+        Data->Thread
+    ));
 
     return FLT_PREOP_SUCCESS_NO_CALLBACK;
 }

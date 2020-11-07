@@ -7,7 +7,8 @@ enum MessageKind {
     MessageKind_Invalid,
     MessageKind_Empty,
     MessageKind_File,
-    MessageKind_Process
+    MessageKind_Process,
+    MessageKind_Image
 };
 
 #define MajorFunction_Create 0
@@ -38,6 +39,18 @@ struct ProcessMessage {
     unsigned int Create;
 };
 
+#define MESSAGE_IMAGE_BUFFER_SIZE (MESSAGE_STRUCT_SIZE - sizeof(struct ImageMessageAttr))
+#define MESSAGE_IMAGE_BUFFER_WSIZE (MESSAGE_IMAGE_BUFFER_SIZE / 2)
+
+struct ImageMessageAttr {
+    unsigned long ProcessId;
+    unsigned short WideLength;
+};
+
+struct ImageMessage {
+    struct ImageMessageAttr Attr;
+    unsigned short Buffer[MESSAGE_IMAGE_BUFFER_WSIZE];
+};
 
 struct Message {
     int Kind;
@@ -46,6 +59,7 @@ struct Message {
         struct EmptyMessage Empty;
         struct FileMessage File;
         struct ProcessMessage Process;
+        struct ImageMessage Image;
     } Data;
 };
 

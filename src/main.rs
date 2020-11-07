@@ -35,6 +35,8 @@ enum Error {
     UnknownMajorFunction(u8),
     #[error("Invalid Message Filename Length ({0})")]
     InvalidMessageFileNameLength(usize),
+    #[error("Invalid Image Filename Length ({0})")]
+    InvalidImageFileNameLength(usize),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -73,6 +75,10 @@ enum Message {
         parent_id: u32,
         create: bool,
     },
+    Image {
+        process_id: u32,
+        filename: String,
+    },
 }
 
 impl TryFrom<bindings::Message> for Message {
@@ -104,6 +110,29 @@ impl TryFrom<bindings::Message> for Message {
                     parent_id: p.ParentId,
                     create: p.Create != 0,
                 })
+            }
+            bindings::MessageKind_MessageKind_Image => {
+                let f = unsafe { m.Data.Image };
+                let n = f.Attr.WideLength as usize;
+                if n == 0 {
+                    Ok(Message::Image {
+                        process_id: f.Attr.ProcessId,
+                        filename: String::new(),
+                    })
+                } else {
+                    let buffer = f.Buffer;
+                    if n > buffer.len() {
+                        Err(Error::InvalidImageFileNameLength(n))
+                    } else {
+                        let filename = unsafe { widestring::U16Str::from_ptr(buffer.as_ptr(), n) }
+                            .to_string_lossy();
+
+                        Ok(Message::Image {
+                            process_id: f.Attr.ProcessId,
+                            filename,
+                        })
+                    }
+                }
             }
             _ => Err(Error::UnknownMessageVariant(m.Kind)),
         }
@@ -224,7 +253,8 @@ fn _main() -> Result<()> {
     // Needs SeLoadDriverPrivilege permission on account to use, which just admin doesn't seem to have
     // let _filter = Filter::load("fsfilter1")?;
     let mut port = Port::connect(r"\sdv_comms_port")?;
-    let mut map = HashMap::<u32, (u32, HashMap<String, (bool, bool)>)>::new();
+    let mut map =
+        HashMap::<u32, (Option<u32>, Option<String>, HashMap<String, (bool, bool)>)>::new();
     loop {
         let message = port.get_message()?;
         match message {
@@ -238,7 +268,7 @@ fn _main() -> Result<()> {
                 //     major_function, process_id, filename
                 // );
                 match map.get_mut(&process_id) {
-                    Some((_parent_id, filemap)) => {
+                    Some((_parent_id, _process_name, filemap)) => {
                         let mut entry = filemap.entry(filename).or_insert((false, false));
                         match major_function {
                             MajorFunction::Read => (entry.0 = true),
@@ -264,18 +294,22 @@ fn _main() -> Result<()> {
                     process_id, parent_id, create
                 );
                 if create {
-                    match map.insert(process_id, (parent_id, HashMap::new())) {
+                    match map.insert(process_id, (Some(parent_id), None, HashMap::new())) {
                         // Not sure if i shoudl replace the existing or not
-                        Some((parent_id, _)) => eprintln!(
-                            "Process {} already in map (Parent {})",
+                        Some((parent_id, _, _)) => eprintln!(
+                            "Process {} already in map (Parent {:?})",
                             process_id, parent_id
                         ),
                         None => {}
                     }
                 } else {
                     match map.remove(&process_id) {
-                        Some((parent_id, filemap)) => {
-                            println!("Process {} finished (Parent {})", process_id, parent_id);
+                        Some((parent_id, process_name, filemap)) => {
+                            let parent_id = parent_id.map(|p| p as isize).unwrap_or(-1);
+                            println!(
+                                "Process {} finished (Parent {:?}) {:?}",
+                                process_id, parent_id, process_name
+                            );
                             let mut filenames: Vec<_> = filemap.keys().collect();
                             filenames.sort();
                             for filename in filenames {
@@ -293,6 +327,18 @@ fn _main() -> Result<()> {
                         }
                         None => eprintln!("Process {} not found in map", process_id),
                     }
+                }
+            }
+            Message::Image {
+                process_id,
+                filename,
+            } => {
+                // TODO THis should check for exe
+                let mut value =
+                    map.entry(process_id)
+                        .or_insert((None, Some(filename.clone()), HashMap::new()));
+                if value.1.is_none() {
+                    value.1 = Some(filename)
                 }
             }
             _ => println!("MSG : {:?}", message),

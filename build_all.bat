@@ -1,0 +1,1 @@
+build_kernel.bat && build_user.bat

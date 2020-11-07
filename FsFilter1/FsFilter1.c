@@ -340,7 +340,9 @@ void ProcessCreateCallback(
             0, // ReplyLength
             &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
         );
-        if (!NT_SUCCESS(status)) {
+        if (NT_SUCCESS(status)){
+            ExFreePoolWithTag(PContext, POOL_TAG);
+        } else {
             if (status == STATUS_THREAD_IS_TERMINATING) {
                 PWorkItem = IoAllocateWorkItem(gDeviceObject);
                 if (PWorkItem == NULL) {

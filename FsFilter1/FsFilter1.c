@@ -28,6 +28,7 @@ struct CompleteMessage {
 };
 static_assert (sizeof(struct CompleteMessage)  == MESSAGE_TOTAL_SIZE_WITH_HEADER, "CompleteMessage is wrong size");
 
+#define POOL_TAG 'FSTR'
 PFLT_FILTER gFilterHandle;
 PDEVICE_OBJECT gDeviceObject;
 PFLT_PORT gServerPort;
@@ -270,17 +271,23 @@ VOID PortDisconnectNotify (
     FltCloseClientPort(gFilterHandle,&gClientPort);
 }
 
+struct WorkItemContext {
+    struct Message Message;
+    PIO_WORKITEM PWorkItem;
+};
+
 void WorkItemSendMessage(
     PDEVICE_OBJECT DeviceObject,
-    PVOID Context
+    PVOID PRawContext
 )
 {
     UNREFERENCED_PARAMETER( DeviceObject );
+    struct WorkItemContext *PContext = (struct WorkItemContext*) PRawContext;
     NTSTATUS status;
     status = FltSendMessage(
         gFilterHandle,
         &gClientPort,
-        Context, // SenderBuffer
+        &PContext->Message, // SenderBuffer
         MESSAGE_TOTAL_SIZE, // SenderBufferLength
         NULL, // ReplyBuffer
         0, // ReplyLength
@@ -292,7 +299,8 @@ void WorkItemSendMessage(
             status
         ));
     }
-    ExFreePool(Context);
+    IoFreeWorkItem(PContext->PWorkItem);
+    ExFreePoolWithTag(PContext, POOL_TAG);
 }
 
 unsigned long IdFromHandle(HANDLE HId) 
@@ -308,8 +316,8 @@ void ProcessCreateCallback(
     _In_ BOOLEAN Create
 ) {
     NTSTATUS status;
-    struct Message message, *pmessage;
-    PIO_WORKITEM WorkItem;
+    PIO_WORKITEM PWorkItem;
+    struct WorkItemContext *PContext;
     unsigned long ProcessId = IdFromHandle(HProcessId);
     unsigned long ParentId = IdFromHandle(HParentId);
 
@@ -317,15 +325,16 @@ void ProcessCreateCallback(
                     ("FsFilter1!ProcessCreateCallback ParentId= %6d/%6d ProcessId=%6d/%6d Create=%d\n", HParentId, ParentId, HProcessId, ProcessId, Create) );
 
     if (gClientPort != NULL) {
-        message.Kind = MessageKind_Process;
+        PContext = ExAllocatePoolWithTag(NonPagedPool, sizeof(struct WorkItemContext), POOL_TAG);
+        PContext->Message.Kind = MessageKind_Process;
 
-        message.Data.Process.ProcessId = ProcessId;
-        message.Data.Process.ParentId = ParentId;
-        message.Data.Process.Create = Create;
+        PContext->Message.Data.Process.ProcessId = ProcessId;
+        PContext->Message.Data.Process.ParentId = ParentId;
+        PContext->Message.Data.Process.Create = Create;
         status = FltSendMessage(
             gFilterHandle,
             &gClientPort,
-            &message, // SenderBuffer
+            PContext, // SenderBuffer
             MESSAGE_TOTAL_SIZE, // SenderBufferLength
             NULL, // ReplyBuffer
             0, // ReplyLength
@@ -333,32 +342,22 @@ void ProcessCreateCallback(
         );
         if (!NT_SUCCESS(status)) {
             if (status == STATUS_THREAD_IS_TERMINATING) {
-                WorkItem = IoAllocateWorkItem(gDeviceObject);
-                if (WorkItem == NULL) {
+                PWorkItem = IoAllocateWorkItem(gDeviceObject);
+                if (PWorkItem == NULL) {
                     PT_DBG_PRINT( TRACE_COMMS, (
                         "FsFilter1!ProcCreate: Failed to alloc work item after failing to send message to client (Thread is terminating)\n"
                     ));
                 } else {
-                    pmessage = ExAllocatePoolWithTag(NonPagedPool, sizeof(struct Message), 'MSGW');
-                    if (pmessage == NULL) {
-                        PT_DBG_PRINT( TRACE_COMMS, (
-                            "FsFilter1!ProcCreate: Failed to alloc message after failing to send message to client (Thread is terminating)\n"
-                        ));
-                    } else {
-                        pmessage->Kind = MessageKind_Process;
-                        pmessage->Data.Process.ProcessId = ProcessId;
-                        pmessage->Data.Process.ParentId = ParentId;
-                        pmessage->Data.Process.Create = Create;
-                        IoQueueWorkItem(
-                            WorkItem,
-                            &WorkItemSendMessage,
-                            DelayedWorkQueue,
-                            pmessage
-                        );
-                        PT_DBG_PRINT( TRACE_COMMS, (
-                            "FsFilter1!ProcCreate: Queued message for later\n"
-                        ));
-                    }
+                    PContext->PWorkItem = PWorkItem;
+                    IoQueueWorkItem(
+                        PWorkItem,
+                        &WorkItemSendMessage,
+                        DelayedWorkQueue,
+                        PContext
+                    );
+                    PT_DBG_PRINT( TRACE_COMMS, (
+                        "FsFilter1!ProcCreate: Queued message for later\n"
+                    ));
                 }
             } else {
                 PT_DBG_PRINT( TRACE_COMMS, (

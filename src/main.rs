@@ -233,6 +233,10 @@ fn _main() -> Result<()> {
                 major_function,
                 filename,
             } => {
+                // println!(
+                //     "File {:?} : process_id={:5} filename={}",
+                //     major_function, process_id, filename
+                // );
                 match map.get_mut(&process_id) {
                     Some((_parent_id, filemap)) => {
                         let mut entry = filemap.entry(filename).or_insert((false, false));
@@ -243,16 +247,12 @@ fn _main() -> Result<()> {
                         }
                     }
                     None => {
-                        //     eprintln!(
+                        // eprintln!(
                         //     "Process {} not found in map for file operation {}",
                         //     process_id, filename
                         // )
                     }
                 }
-                // println!(
-                //     "File {:?} : process_id={:5} filename={}",
-                //     major_function, process_id, filename
-                // );
             }
             Message::Process {
                 process_id,
@@ -276,7 +276,10 @@ fn _main() -> Result<()> {
                     match map.remove(&process_id) {
                         Some((parent_id, filemap)) => {
                             println!("Process {} finished (Parent {})", process_id, parent_id);
-                            for (filename, (read, write)) in filemap.iter() {
+                            let mut filenames: Vec<_> = filemap.keys().collect();
+                            filenames.sort();
+                            for filename in filenames {
+                                let (read, write) = filemap.get(filename).unwrap();
                                 if *read && *write {
                                     println!("IO : {}", filename);
                                 } else if *read {

@@ -251,8 +251,8 @@ impl Drop for Filter {
 
 #[derive(Debug, Default)]
 struct ProcessMapValue {
-    track: bool,
     parent_id: Option<u32>,
+    children_ids: Vec<u32>,
     process_name: Option<PathBuf>,
     filemap: HashMap<PathBuf, FileMapValue>,
 }
@@ -265,6 +265,12 @@ struct FileMapValue {
 
 fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
     let mut map = HashMap::<u32, ProcessMapValue>::new();
+    let mut child_map = HashMap::new();
+    // let mut tracked_pids = HashSet::new();
+    let tracked_process_names = vec![
+        OsStr::new("nastran.exe").to_owned(),
+        OsStr::new("create_file.exe").to_owned(),
+    ];
     while let Ok(raw_message) = rcv.recv() {
         let message = match raw_message.message.try_into() {
             Ok(m) => m,
@@ -283,20 +289,23 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                 //     "File {:?} : process_id={:5} filepath={}",
                 //     major_function, process_id, filepath
                 // );
-                match map.get_mut(&process_id) {
-                    Some(ProcessMapValue { filemap, .. }) => {
-                        let mut entry = filemap.entry(filepath).or_default();
-                        match major_function {
-                            MajorFunction::Read => (entry.read = true),
-                            MajorFunction::Write => (entry.write = true),
-                            MajorFunction::Create => {}
+                if let Some(tracked_id) = child_map.get(&process_id) {
+                    match map.get_mut(&tracked_id) {
+                        Some(ProcessMapValue { filemap, .. }) => {
+                            // println!("Attaching to {} : {}", tracked_id, filepath.display());
+                            let mut entry = filemap.entry(filepath).or_default();
+                            match major_function {
+                                MajorFunction::Read => (entry.read = true),
+                                MajorFunction::Write => (entry.write = true),
+                                MajorFunction::Create => {}
+                            }
                         }
-                    }
-                    None => {
-                        // eprintln!(
-                        //     "Process {} not found in map for file operation {}",
-                        //     process_id, filepath
-                        // )
+                        None => eprintln!(
+                            "Process {} (Tracked {}) not found in map for file operation {}",
+                            process_id,
+                            tracked_id,
+                            filepath.display()
+                        ),
                     }
                 }
             }
@@ -305,54 +314,79 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                 parent_id,
                 create,
             } => {
-                println!(
-                    "Process : parent_id={:5} process_id={:5} create={}",
-                    process_id, parent_id, create
-                );
+                // println!(
+                //     "Process : parent_id={:5} process_id={:5} create={}",
+                //     process_id, parent_id, create
+                // );
                 if create {
-                    match map.insert(
-                        process_id,
-                        ProcessMapValue {
-                            parent_id: Some(parent_id),
-                            ..Default::default()
-                        },
-                    ) {
-                        // Not sure if i shoudl replace the existing or not
-                        Some(ProcessMapValue { parent_id, .. }) => eprintln!(
-                            "Process {} already in map (Parent {:?})",
-                            process_id, parent_id
-                        ),
-                        None => {}
+                    let tracked_id_from_parent = child_map.get(&parent_id).copied();
+                    if tracked_id_from_parent.is_none() {
+                        // println!("Process started {} (Parent {})", process_id, parent_id);
+                        // Need to insert in case the process name matches later
+                        match map.insert(
+                            process_id,
+                            ProcessMapValue {
+                                parent_id: Some(parent_id),
+                                ..Default::default()
+                            },
+                        ) {
+                            // Not sure if i shoudl replace the existing or not
+                            Some(ProcessMapValue { parent_id, .. }) => eprintln!(
+                                "Process {} already in map (Parent {:?})",
+                                process_id, parent_id
+                            ),
+                            None => {}
+                        }
+                    } else {
+                        let tracked_id = tracked_id_from_parent.unwrap();
+                        child_map.insert(process_id, tracked_id);
+                        map.get_mut(&tracked_id)
+                            .map(|v| v.children_ids.push(process_id));
                     }
                 } else {
-                    match map.remove(&process_id) {
-                        Some(ProcessMapValue {
-                            parent_id,
-                            process_name,
-                            filemap,
-                            ..
-                        }) => {
-                            let parent_id = parent_id.map(|p| p as isize).unwrap_or(-1);
-                            println!(
-                                "Process {} finished (Parent {:?}) {:?}",
-                                process_id, parent_id, process_name
-                            );
-                            let mut filepaths: Vec<_> = filemap.keys().collect();
-                            filepaths.sort();
-                            for filepath in filepaths {
-                                let FileMapValue { read, write } = filemap.get(filepath).unwrap();
-                                if *read && *write {
-                                    println!("IO : {}", filepath.display());
-                                } else if *read {
-                                    println!("I  : {}", filepath.display());
-                                } else if *write {
-                                    println!(" O : {}", filepath.display());
-                                } else {
-                                    println!("   : {}", filepath.display());
+                    let tracked_id = child_map.get(&process_id).copied();
+                    if tracked_id.is_none() {
+                        let _ = map.remove(&process_id);
+                    } else {
+                        let tracked_id = tracked_id.unwrap();
+                        if tracked_id != process_id {
+                            continue;
+                        }
+                        match map.remove(&process_id) {
+                            Some(ProcessMapValue {
+                                parent_id,
+                                process_name,
+                                children_ids,
+                                filemap,
+                                ..
+                            }) => {
+                                for child_id in children_ids {
+                                    let _ = child_map.remove(&child_id);
+                                }
+                                let _ = child_map.remove(&process_id);
+                                let parent_id = parent_id.map(|p| p as isize).unwrap_or(-1);
+                                println!(
+                                    "Process {} finished (Parent {:?}) {:?}",
+                                    process_id, parent_id, process_name
+                                );
+                                let mut filepaths: Vec<_> = filemap.keys().collect();
+                                filepaths.sort();
+                                for filepath in filepaths {
+                                    let FileMapValue { read, write } =
+                                        filemap.get(filepath).unwrap();
+                                    if *read && *write {
+                                        println!("IO : {}", filepath.display());
+                                    } else if *read {
+                                        println!("I  : {}", filepath.display());
+                                    } else if *write {
+                                        println!(" O : {}", filepath.display());
+                                    } else {
+                                        println!("   : {}", filepath.display());
+                                    }
                                 }
                             }
+                            None => eprintln!("Process {} not found in map", process_id),
                         }
-                        None => eprintln!("Process {} not found in map", process_id),
                     }
                 }
             }
@@ -360,10 +394,24 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                 process_id,
                 filepath,
             } => {
-                // TODO This should check for exe
-                let mut value = map.entry(process_id).or_default();
-                if value.process_name.is_none() {
-                    value.process_name = Some(filepath)
+                // Tracking checking is done here because we need to know process name first
+                let tracked = child_map.contains_key(&process_id);
+                if !tracked {
+                    if let Some(filename) = filepath.file_name() {
+                        if tracked_process_names.contains(&filename.to_owned()) {
+                            // println!("Tracking Process {}", process_id);
+                            child_map.insert(process_id, process_id);
+                        } else {
+                            // Remove the process from the map if its not tracked
+                            map.remove(&process_id);
+                            continue;
+                        }
+                    }
+                    // TODO This should check for exe
+                    let mut value = map.entry(process_id).or_default();
+                    if value.process_name.is_none() {
+                        value.process_name = Some(filepath)
+                    }
                 }
             }
             _ => println!("MSG : {:?}", message),

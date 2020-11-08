@@ -249,9 +249,21 @@ impl Drop for Filter {
     }
 }
 
+#[derive(Debug, Default)]
+struct ProcessMapValue {
+    parent_id: Option<u32>,
+    process_name: Option<String>,
+    filemap: HashMap<String, FileMapValue>,
+}
+
+#[derive(Debug, Default)]
+struct FileMapValue {
+    read: bool,
+    write: bool,
+}
+
 fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
-    let mut map =
-        HashMap::<u32, (Option<u32>, Option<String>, HashMap<String, (bool, bool)>)>::new();
+    let mut map = HashMap::<u32, ProcessMapValue>::new();
     while let Ok(raw_message) = rcv.recv() {
         let message = match raw_message.message.try_into() {
             Ok(m) => m,
@@ -271,11 +283,11 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                 //     major_function, process_id, filename
                 // );
                 match map.get_mut(&process_id) {
-                    Some((_parent_id, _process_name, filemap)) => {
-                        let mut entry = filemap.entry(filename).or_insert((false, false));
+                    Some(ProcessMapValue { filemap, .. }) => {
+                        let mut entry = filemap.entry(filename).or_default();
                         match major_function {
-                            MajorFunction::Read => (entry.0 = true),
-                            MajorFunction::Write => (entry.1 = true),
+                            MajorFunction::Read => (entry.read = true),
+                            MajorFunction::Write => (entry.write = true),
                             MajorFunction::Create => {}
                         }
                     }
@@ -297,9 +309,15 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                     process_id, parent_id, create
                 );
                 if create {
-                    match map.insert(process_id, (Some(parent_id), None, HashMap::new())) {
+                    match map.insert(
+                        process_id,
+                        ProcessMapValue {
+                            parent_id: Some(parent_id),
+                            ..Default::default()
+                        },
+                    ) {
                         // Not sure if i shoudl replace the existing or not
-                        Some((parent_id, _, _)) => eprintln!(
+                        Some(ProcessMapValue { parent_id, .. }) => eprintln!(
                             "Process {} already in map (Parent {:?})",
                             process_id, parent_id
                         ),
@@ -307,7 +325,12 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                     }
                 } else {
                     match map.remove(&process_id) {
-                        Some((parent_id, process_name, filemap)) => {
+                        Some(ProcessMapValue {
+                            parent_id,
+                            process_name,
+                            filemap,
+                            ..
+                        }) => {
                             let parent_id = parent_id.map(|p| p as isize).unwrap_or(-1);
                             println!(
                                 "Process {} finished (Parent {:?}) {:?}",
@@ -316,7 +339,7 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                             let mut filenames: Vec<_> = filemap.keys().collect();
                             filenames.sort();
                             for filename in filenames {
-                                let (read, write) = filemap.get(filename).unwrap();
+                                let FileMapValue { read, write } = filemap.get(filename).unwrap();
                                 if *read && *write {
                                     println!("IO : {}", filename);
                                 } else if *read {
@@ -337,11 +360,12 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                 filename,
             } => {
                 // TODO THis should check for exe
-                let mut value =
-                    map.entry(process_id)
-                        .or_insert((None, Some(filename.clone()), HashMap::new()));
-                if value.1.is_none() {
-                    value.1 = Some(filename)
+                let mut value = map.entry(process_id).or_insert(ProcessMapValue {
+                    process_name: Some(filename.clone()),
+                    ..Default::default()
+                });
+                if value.process_name.is_none() {
+                    value.process_name = Some(filename)
                 }
             }
             _ => println!("MSG : {:?}", message),

@@ -34,10 +34,10 @@ enum Error {
     UnknownMessageVariant(i32),
     #[error("Unknown Major Function ({0})")]
     UnknownMajorFunction(u8),
-    #[error("Invalid Message Filename Length ({0})")]
-    InvalidMessageFileNameLength(usize),
-    #[error("Invalid Image Filename Length ({0})")]
-    InvalidImageFileNameLength(usize),
+    #[error("Invalid Message File Path Length ({0})")]
+    InvalidMessageFilePathLength(usize),
+    #[error("Invalid Image File Path Length ({0})")]
+    InvalidImageFilePathLength(usize),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -69,7 +69,7 @@ enum Message {
     File {
         process_id: u32,
         major_function: MajorFunction,
-        filename: PathBuf,
+        filepath: PathBuf,
     },
     Process {
         process_id: u32,
@@ -78,7 +78,7 @@ enum Message {
     },
     Image {
         process_id: u32,
-        filename: PathBuf,
+        filepath: PathBuf,
     },
 }
 
@@ -93,13 +93,13 @@ impl TryFrom<bindings::Message> for Message {
                 let n = f.Attr.WideLength as usize;
                 let buffer = f.Buffer;
                 if n > buffer.len() {
-                    Err(Error::InvalidMessageFileNameLength(n))
+                    Err(Error::InvalidMessageFilePathLength(n))
                 } else {
-                    let filename = OsString::from_wide(&buffer[..n]).into();
+                    let filepath = OsString::from_wide(&buffer[..n]).into();
                     Ok(Message::File {
                         process_id: f.Attr.ProcessId,
                         major_function: f.Attr.MajorFunction.try_into()?,
-                        filename,
+                        filepath,
                     })
                 }
             }
@@ -117,18 +117,18 @@ impl TryFrom<bindings::Message> for Message {
                 if n == 0 {
                     Ok(Message::Image {
                         process_id: f.Attr.ProcessId,
-                        filename: PathBuf::new(),
+                        filepath: PathBuf::new(),
                     })
                 } else {
                     let buffer = f.Buffer;
                     if n > buffer.len() {
-                        Err(Error::InvalidImageFileNameLength(n))
+                        Err(Error::InvalidImageFilePathLength(n))
                     } else {
-                        let filename = OsString::from_wide(&buffer[..n]).into();
+                        let filepath = OsString::from_wide(&buffer[..n]).into();
 
                         Ok(Message::Image {
                             process_id: f.Attr.ProcessId,
-                            filename,
+                            filepath,
                         })
                     }
                 }
@@ -277,15 +277,15 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
             Message::File {
                 process_id,
                 major_function,
-                filename,
+                filepath,
             } => {
                 // println!(
-                //     "File {:?} : process_id={:5} filename={}",
-                //     major_function, process_id, filename
+                //     "File {:?} : process_id={:5} filepath={}",
+                //     major_function, process_id, filepath
                 // );
                 match map.get_mut(&process_id) {
                     Some(ProcessMapValue { filemap, .. }) => {
-                        let mut entry = filemap.entry(filename).or_default();
+                        let mut entry = filemap.entry(filepath).or_default();
                         match major_function {
                             MajorFunction::Read => (entry.read = true),
                             MajorFunction::Write => (entry.write = true),
@@ -295,7 +295,7 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                     None => {
                         // eprintln!(
                         //     "Process {} not found in map for file operation {}",
-                        //     process_id, filename
+                        //     process_id, filepath
                         // )
                     }
                 }
@@ -337,18 +337,18 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                                 "Process {} finished (Parent {:?}) {:?}",
                                 process_id, parent_id, process_name
                             );
-                            let mut filenames: Vec<_> = filemap.keys().collect();
-                            filenames.sort();
-                            for filename in filenames {
-                                let FileMapValue { read, write } = filemap.get(filename).unwrap();
+                            let mut filepaths: Vec<_> = filemap.keys().collect();
+                            filepaths.sort();
+                            for filepath in filepaths {
+                                let FileMapValue { read, write } = filemap.get(filepath).unwrap();
                                 if *read && *write {
-                                    println!("IO : {}", filename.display());
+                                    println!("IO : {}", filepath.display());
                                 } else if *read {
-                                    println!("I  : {}", filename.display());
+                                    println!("I  : {}", filepath.display());
                                 } else if *write {
-                                    println!(" O : {}", filename.display());
+                                    println!(" O : {}", filepath.display());
                                 } else {
-                                    println!("   : {}", filename.display());
+                                    println!("   : {}", filepath.display());
                                 }
                             }
                         }
@@ -358,15 +358,12 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
             }
             Message::Image {
                 process_id,
-                filename,
+                filepath,
             } => {
                 // TODO This should check for exe
-                let mut value = map.entry(process_id).or_insert(ProcessMapValue {
-                    process_name: Some(filename.clone()),
-                    ..Default::default()
-                });
+                let mut value = map.entry(process_id).or_default();
                 if value.process_name.is_none() {
-                    value.process_name = Some(filename)
+                    value.process_name = Some(filepath)
                 }
             }
             _ => println!("MSG : {:?}", message),

@@ -1,7 +1,8 @@
 use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::convert::TryInto;
-use std::ffi::OsStr;
+use std::convert::{TryFrom, TryInto};
+use std::ffi::{OsStr, OsString};
+use std::os::windows::prelude::*;
+use std::path::PathBuf;
 
 use thiserror::Error;
 use winapi::shared::ntdef::HANDLE;
@@ -68,7 +69,7 @@ enum Message {
     File {
         process_id: u32,
         major_function: MajorFunction,
-        filename: String,
+        filename: PathBuf,
     },
     Process {
         process_id: u32,
@@ -77,7 +78,7 @@ enum Message {
     },
     Image {
         process_id: u32,
-        filename: String,
+        filename: PathBuf,
     },
 }
 
@@ -94,8 +95,7 @@ impl TryFrom<bindings::Message> for Message {
                 if n > buffer.len() {
                     Err(Error::InvalidMessageFileNameLength(n))
                 } else {
-                    let filename = unsafe { widestring::U16Str::from_ptr(buffer.as_ptr(), n) }
-                        .to_string_lossy();
+                    let filename = OsString::from_wide(&buffer[..n]).into();
                     Ok(Message::File {
                         process_id: f.Attr.ProcessId,
                         major_function: f.Attr.MajorFunction.try_into()?,
@@ -117,15 +117,14 @@ impl TryFrom<bindings::Message> for Message {
                 if n == 0 {
                     Ok(Message::Image {
                         process_id: f.Attr.ProcessId,
-                        filename: String::new(),
+                        filename: PathBuf::new(),
                     })
                 } else {
                     let buffer = f.Buffer;
                     if n > buffer.len() {
                         Err(Error::InvalidImageFileNameLength(n))
                     } else {
-                        let filename = unsafe { widestring::U16Str::from_ptr(buffer.as_ptr(), n) }
-                            .to_string_lossy();
+                        let filename = OsString::from_wide(&buffer[..n]).into();
 
                         Ok(Message::Image {
                             process_id: f.Attr.ProcessId,
@@ -226,6 +225,7 @@ struct Filter {
 }
 
 impl Filter {
+    #[allow(dead_code)]
     fn load(filter_name: impl AsRef<OsStr>) -> Result<Self> {
         use std::os::windows::prelude::*;
         let name: Vec<_> = filter_name.as_ref().encode_wide().chain(Some(0)).collect();
@@ -251,9 +251,10 @@ impl Drop for Filter {
 
 #[derive(Debug, Default)]
 struct ProcessMapValue {
+    track: bool,
     parent_id: Option<u32>,
-    process_name: Option<String>,
-    filemap: HashMap<String, FileMapValue>,
+    process_name: Option<PathBuf>,
+    filemap: HashMap<PathBuf, FileMapValue>,
 }
 
 #[derive(Debug, Default)]
@@ -341,13 +342,13 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                             for filename in filenames {
                                 let FileMapValue { read, write } = filemap.get(filename).unwrap();
                                 if *read && *write {
-                                    println!("IO : {}", filename);
+                                    println!("IO : {}", filename.display());
                                 } else if *read {
-                                    println!("I  : {}", filename);
+                                    println!("I  : {}", filename.display());
                                 } else if *write {
-                                    println!(" O : {}", filename);
+                                    println!(" O : {}", filename.display());
                                 } else {
-                                    println!("   : {}", filename);
+                                    println!("   : {}", filename.display());
                                 }
                             }
                         }
@@ -359,7 +360,7 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                 process_id,
                 filename,
             } => {
-                // TODO THis should check for exe
+                // TODO This should check for exe
                 let mut value = map.entry(process_id).or_insert(ProcessMapValue {
                     process_name: Some(filename.clone()),
                     ..Default::default()

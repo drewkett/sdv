@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 bstr = "0.2"
+crossbeam = "0.8"
 thiserror = "1"
 widestring = "0.4"
 winapi = {git="https://github.com/mat-gas/winapi-rs",branch="add_fltlib",features=["fltuser","winerror","handleapi"]}

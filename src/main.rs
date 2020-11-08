@@ -201,7 +201,7 @@ impl Port {
         }
     }
 
-    fn get_message(&mut self) -> Result<Message> {
+    fn get_message(&mut self) -> Result<Box<CompleteMessage>> {
         let mut raw_message: Box<CompleteMessage> = Box::new(unsafe { std::mem::zeroed() });
         let overlapped = std::ptr::null_mut();
         debug_assert!(std::mem::size_of::<Message>() < u32::MAX as usize);
@@ -214,7 +214,7 @@ impl Port {
             )
         };
         if winerror::SUCCEEDED(result) {
-            Message::try_from(raw_message.message)
+            Ok(raw_message)
         } else {
             Err(Error::GetMessageError(result))
         }
@@ -249,14 +249,17 @@ impl Drop for Filter {
     }
 }
 
-fn _main() -> Result<()> {
-    // Needs SeLoadDriverPrivilege permission on account to use, which just admin doesn't seem to have
-    // let _filter = Filter::load("fsfilter1")?;
-    let mut port = Port::connect(r"\sdv_comms_port")?;
+fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
     let mut map =
         HashMap::<u32, (Option<u32>, Option<String>, HashMap<String, (bool, bool)>)>::new();
-    loop {
-        let message = port.get_message()?;
+    while let Ok(raw_message) = rcv.recv() {
+        let message = match raw_message.message.try_into() {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("Error receiving message : {}", e);
+                continue;
+            }
+        };
         match message {
             Message::File {
                 process_id,
@@ -344,6 +347,25 @@ fn _main() -> Result<()> {
             _ => println!("MSG : {:?}", message),
         }
     }
+}
+
+fn _main() -> Result<()> {
+    // Needs SeLoadDriverPrivilege permission on account to use, which just admin doesn't seem to have
+    // let _filter = Filter::load("fsfilter1")?;
+    let mut port = Port::connect(r"\sdv_comms_port")?;
+    let (snd, rcv) = crossbeam::channel::unbounded();
+    let thread = std::thread::spawn(|| {
+        worker(rcv);
+    });
+    loop {
+        let message = port.get_message()?;
+        if let Err(e) = snd.send(message) {
+            eprintln!("Failed to send to worker thread : {} ", e);
+            break;
+        }
+    }
+    let _ = thread.join();
+    Ok(())
 }
 
 fn main() {

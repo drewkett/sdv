@@ -24,7 +24,6 @@ struct EmptyMessage {
 
 struct FileMessageAttr {
     unsigned long ProcessId;
-    unsigned char DeleteOnClose;
     unsigned char MajorFunction;
     unsigned short WideLength;
 };

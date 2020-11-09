@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::ffi::{OsStr, OsString};
 use std::os::windows::prelude::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 use winapi::shared::ntdef::HANDLE;
@@ -75,7 +75,6 @@ enum Message {
     File {
         process_id: u32,
         major_function: MajorFunction,
-        delete_on_close: bool,
         filepath: PathBuf,
     },
     Process {
@@ -106,7 +105,6 @@ impl TryFrom<bindings::Message> for Message {
                     Ok(Message::File {
                         process_id: f.Attr.ProcessId,
                         major_function: f.Attr.MajorFunction.try_into()?,
-                        delete_on_close: f.Attr.DeleteOnClose != 0,
                         filepath,
                     })
                 }
@@ -269,13 +267,11 @@ struct ProcessMapValue {
 struct FileMapValue {
     read: bool,
     write: bool,
-    delete_on_close: bool,
 }
 
 fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
     let mut map = HashMap::<u32, ProcessMapValue>::new();
     let mut child_map = HashMap::new();
-    // let mut tracked_pids = HashSet::new();
     let tracked_process_names = vec![
         OsStr::new("nastran.exe").to_owned(),
         OsStr::new("create_file.exe").to_owned(),
@@ -292,7 +288,6 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
             Message::File {
                 process_id,
                 major_function,
-                delete_on_close,
                 filepath,
             } => {
                 // println!(
@@ -309,11 +304,7 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                                 MajorFunction::Write => (entry.write = true),
                                 MajorFunction::Create => {}
                                 MajorFunction::SetInfo => {
-                                    println!(
-                                        "Delete {} File {}",
-                                        delete_on_close,
-                                        filepath.display()
-                                    );
+                                    println!("SetInfo File {}", filepath.display());
                                 }
                                 MajorFunction::Close => {
                                     println!("Close File {}", filepath.display());
@@ -322,7 +313,6 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                                     println!("Cleanup File {}", filepath.display());
                                 }
                             }
-                            entry.delete_on_close |= delete_on_close;
                         }
                         None => eprintln!(
                             "Process {} (Tracked {}) not found in map for file operation {}",
@@ -393,14 +383,27 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                                     "Process {} finished (Parent {:?}) {:?}",
                                     process_id, parent_id, process_name
                                 );
-                                let mut filepaths: Vec<_> = filemap.keys().collect();
+                                let mut filepaths: Vec<_> = filemap.keys().cloned().collect();
                                 filepaths.sort();
-                                for filepath in filepaths {
-                                    let FileMapValue {
-                                        read,
-                                        write,
-                                        delete_on_close,
-                                    } = filemap.get(filepath).unwrap();
+                                for mut filepath in filepaths {
+                                    let FileMapValue { read, write } =
+                                        filemap.get(&filepath).unwrap();
+                                    if !(*read || *write) {
+                                        continue;
+                                    }
+                                    // I think all local files will start with device. Replacing \Device with \\?\
+                                    // causes the path to work for looking up files from rust
+                                    if let Ok(fileend) = filepath.strip_prefix("/Device") {
+                                        filepath = Path::new(r"\\?\").join(fileend);
+                                        // canonicalize to get drive letter.
+                                        if let Ok(new_filepath) = filepath.canonicalize() {
+                                            filepath = new_filepath;
+                                        } else {
+                                            // canonicalize only works on files that exists
+                                            // If the file no longer exists we're assuming that it was a temporary file
+                                            continue;
+                                        }
+                                    }
                                     if *read {
                                         print!("I");
                                     } else {
@@ -408,11 +411,6 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                                     }
                                     if *write {
                                         print!("O");
-                                    } else {
-                                        print!(" ");
-                                    }
-                                    if *delete_on_close {
-                                        print!("D");
                                     } else {
                                         print!(" ");
                                     }

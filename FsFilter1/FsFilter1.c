@@ -722,31 +722,27 @@ FsFilter1PreOperation (
             message.Data.File.Attr.MajorFunction = Data->Iopb->MajorFunction;
             if (Data->Iopb->MajorFunction == IRP_MJ_READ) {
             } else if (Data->Iopb->MajorFunction == IRP_MJ_WRITE) {
-            } else if (Data->Iopb->MajorFunction == IRP_MJ_CREATE) {
-                message.Data.File.Attr.DeleteOnClose = (Data->Iopb->Parameters.Create.Options & FILE_DELETE_ON_CLOSE) != 0;
-            } else if (Data->Iopb->MajorFunction == IRP_MJ_SET_INFORMATION) {
-                // Probably won't try to track deletions this way
-                FILE_INFORMATION_CLASS Class = Data->Iopb->Parameters.SetFileInformation.FileInformationClass;
-                if (Class == FileDispositionInformation ) {
-                    message.Data.File.Attr.DeleteOnClose = ((PFILE_DISPOSITION_INFORMATION) Data->Iopb->Parameters.SetFileInformation.InfoBuffer)->DeleteFile;
-                } else if (Class == FileDispositionInformationEx ){
-                    message.Data.File.Attr.DeleteOnClose = (((PFILE_DISPOSITION_INFORMATION_EX) Data->Iopb->Parameters.SetFileInformation.InfoBuffer)->Flags & FILE_DISPOSITION_DELETE) != 0;
-                } else {
-                    FltReleaseFileNameInformation(FileNameInfo);
-                    return FLT_PREOP_SUCCESS_NO_CALLBACK;
-                }
-            } else if (Data->Iopb->MajorFunction == IRP_MJ_CLOSE) {
-            } else if (Data->Iopb->MajorFunction == IRP_MJ_CLEANUP) {
+            // } else if (Data->Iopb->MajorFunction == IRP_MJ_CREATE) {
+            //     message.Data.File.Attr.DeleteOnClose = (Data->Iopb->Parameters.Create.Options & FILE_DELETE_ON_CLOSE) != 0;
+            // } else if (Data->Iopb->MajorFunction == IRP_MJ_SET_INFORMATION) {
+            //     // Probably won't try to track deletions this way
+            //     FILE_INFORMATION_CLASS Class = Data->Iopb->Parameters.SetFileInformation.FileInformationClass;
+            //     if (Class == FileDispositionInformation ) {
+            //         message.Data.File.Attr.DeleteOnClose = ((PFILE_DISPOSITION_INFORMATION) Data->Iopb->Parameters.SetFileInformation.InfoBuffer)->DeleteFile;
+            //     } else if (Class == FileDispositionInformationEx ){
+            //         message.Data.File.Attr.DeleteOnClose = (((PFILE_DISPOSITION_INFORMATION_EX) Data->Iopb->Parameters.SetFileInformation.InfoBuffer)->Flags & FILE_DISPOSITION_DELETE) != 0;
+            //     } else {
+            //         FltReleaseFileNameInformation(FileNameInfo);
+            //         return FLT_PREOP_SUCCESS_NO_CALLBACK;
+            //     }
+            // } else if (Data->Iopb->MajorFunction == IRP_MJ_CLOSE) {
+            // } else if (Data->Iopb->MajorFunction == IRP_MJ_CLEANUP) {
             } else {
                 PT_DBG_PRINT( TRACE_ALWAYS, (
-                    "FsFilter1!Pre(Op=%d): ThreadId=%6d ProcessId=%6d Create=%d Close=%d Read=%d Write=%d Name=%wZ\n",
+                    "FsFilter1!Pre(Op=%d): Unknown Major Function ThreadId=%6d ProcessId=%6d Name=%wZ\n",
                     Data->Iopb->MajorFunction,
                     ThreadId,
                     ProcessId,
-                    (Data->Iopb->IrpFlags & IRP_CREATE_OPERATION) != 0,
-                    (Data->Iopb->IrpFlags & IRP_CLOSE_OPERATION) != 0,
-                    (Data->Iopb->IrpFlags & IRP_READ_OPERATION) != 0,
-                    (Data->Iopb->IrpFlags & IRP_WRITE_OPERATION) != 0,
                     FileNameInfo->Name
                 ));
                 FltReleaseFileNameInformation(FileNameInfo);

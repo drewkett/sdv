@@ -51,7 +51,7 @@ LARGE_INTEGER PortTimeout = { .QuadPart = -100 };
 #define TRACE_PROC            0x00000020
 #define TRACE_ALWAYS    0xFFFFFFFF
 
-ULONG gTraceFlags = TRACE_INIT|TRACE_COMMS;
+ULONG gTraceFlags = TRACE_INIT;
 
 
 #define PT_DBG_PRINT( _dbgLevel, _string )          \
@@ -312,7 +312,7 @@ void WorkItemSendMessage(
         &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
     );
     if (!NT_SUCCESS(status)) {
-        PT_DBG_PRINT( TRACE_COMMS, (
+        PT_DBG_PRINT( TRACE_ALWAYS, (
             "FsFilter1!WorkItemSendMessage: Failed to send message to client (0x%08x)\n",
             status
         ));
@@ -345,7 +345,7 @@ void ProcessCreateCallback(
     if (gClientPort != NULL) {
         PContext = ExAllocatePoolWithTag(NonPagedPool, sizeof(struct WorkItemContext), POOL_TAG);
         if (PContext == NULL) {
-            PT_DBG_PRINT( TRACE_COMMS, (
+            PT_DBG_PRINT( TRACE_ALWAYS, (
                 "FsFilter1!ProcCreate: Failed to alloc context\n"
             ));
             return;
@@ -370,7 +370,7 @@ void ProcessCreateCallback(
             if (status == STATUS_THREAD_IS_TERMINATING) {
                 PWorkItem = IoAllocateWorkItem(gDeviceObject);
                 if (PWorkItem == NULL) {
-                    PT_DBG_PRINT( TRACE_COMMS, (
+                    PT_DBG_PRINT( TRACE_ALWAYS, (
                         "FsFilter1!ProcCreate: Failed to alloc work item after failing to send message to client (Thread is terminating)\n"
                     ));
                 } else {
@@ -386,7 +386,7 @@ void ProcessCreateCallback(
                     ));
                 }
             } else {
-                PT_DBG_PRINT( TRACE_COMMS, (
+                PT_DBG_PRINT( TRACE_ALWAYS, (
                     "FsFilter1!ProcCreate: Failed to send message to client (0x%08x)\n",
                     status
                 ));
@@ -415,7 +415,7 @@ void ImageLoadCallback(
     if (gClientPort != NULL) {
         PContext = ExAllocatePoolWithTag(NonPagedPool, sizeof(struct WorkItemContext), POOL_TAG);
         if (PContext == NULL) {
-            PT_DBG_PRINT( TRACE_COMMS, (
+            PT_DBG_PRINT( TRACE_ALWAYS, (
                 "FsFilter1!ImageLoad: Failed to alloc context\n"
             ));
             return;
@@ -441,7 +441,7 @@ void ImageLoadCallback(
                 &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
             );
             if (!NT_SUCCESS(status)) {
-                PT_DBG_PRINT( TRACE_COMMS, (
+                PT_DBG_PRINT( TRACE_ALWAYS, (
                     "FsFilter1!ImageLoad: Failed to send message to client (0x%08x)\n",
                     status
                 ));
@@ -762,7 +762,7 @@ FsFilter1PreOperation (
                     &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
                 );
                 if (!NT_SUCCESS(status)) {
-                    PT_DBG_PRINT( TRACE_COMMS, (
+                    PT_DBG_PRINT( TRACE_ALWAYS, (
                         "FsFilter1!Pre(Op=%d): Failed to send message to client (0x%08x)\n",
                         Data->Iopb->MajorFunction,
                         status
@@ -780,13 +780,15 @@ FsFilter1PreOperation (
     } else {
         switch (status) {
             case STATUS_FLT_INVALID_NAME_REQUEST:
+                // FltGetFileNameInformation cannot get file name information in certain following circumstances. Seems 
+                // safe to ignore this for now
                 PT_DBG_PRINT( TRACE_FILENAMES, (
                     "FsFilter1!Pre(Op=%d): OpFltGetFileNameInformation Failed, STATUS_FLT_INVALID_NAME_REQUEST\n",
                     Data->Iopb->MajorFunction
                 ) );
                 break;
             default:
-                PT_DBG_PRINT( TRACE_FILENAMES, (
+                PT_DBG_PRINT( TRACE_ALWAYS, (
                     "FsFilter1!Pre(Op=%d): FltGetFileNameInformation Failed, status=0x%08x\n",
                     Data->Iopb->MajorFunction,
                     status

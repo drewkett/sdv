@@ -48,6 +48,9 @@ enum MajorFunction {
     Create = bindings::MajorFunction_Create as u8,
     Read = bindings::MajorFunction_Read as u8,
     Write = bindings::MajorFunction_Write as u8,
+    SetInfo = bindings::MajorFunction_SetInfo as u8,
+    Close = bindings::MajorFunction_Close as u8,
+    Cleanup = bindings::MajorFunction_Cleanup as u8,
 }
 
 impl TryFrom<u8> for MajorFunction {
@@ -58,6 +61,9 @@ impl TryFrom<u8> for MajorFunction {
             x if x == Self::Create as u8 => Ok(Self::Create),
             x if x == Self::Read as u8 => Ok(Self::Read),
             x if x == Self::Write as u8 => Ok(Self::Write),
+            x if x == Self::SetInfo as u8 => Ok(Self::SetInfo),
+            x if x == Self::Close as u8 => Ok(Self::Close),
+            x if x == Self::Cleanup as u8 => Ok(Self::Cleanup),
             _ => Err(Error::UnknownMajorFunction(v)),
         }
     }
@@ -69,6 +75,7 @@ enum Message {
     File {
         process_id: u32,
         major_function: MajorFunction,
+        delete_on_close: bool,
         filepath: PathBuf,
     },
     Process {
@@ -99,6 +106,7 @@ impl TryFrom<bindings::Message> for Message {
                     Ok(Message::File {
                         process_id: f.Attr.ProcessId,
                         major_function: f.Attr.MajorFunction.try_into()?,
+                        delete_on_close: f.Attr.DeleteOnClose != 0,
                         filepath,
                     })
                 }
@@ -261,6 +269,7 @@ struct ProcessMapValue {
 struct FileMapValue {
     read: bool,
     write: bool,
+    delete_on_close: bool,
 }
 
 fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
@@ -283,6 +292,7 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
             Message::File {
                 process_id,
                 major_function,
+                delete_on_close,
                 filepath,
             } => {
                 // println!(
@@ -293,12 +303,26 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                     match map.get_mut(&tracked_id) {
                         Some(ProcessMapValue { filemap, .. }) => {
                             // println!("Attaching to {} : {}", tracked_id, filepath.display());
-                            let mut entry = filemap.entry(filepath).or_default();
+                            let mut entry = filemap.entry(filepath.clone()).or_default();
                             match major_function {
                                 MajorFunction::Read => (entry.read = true),
                                 MajorFunction::Write => (entry.write = true),
                                 MajorFunction::Create => {}
+                                MajorFunction::SetInfo => {
+                                    println!(
+                                        "Delete {} File {}",
+                                        delete_on_close,
+                                        filepath.display()
+                                    );
+                                }
+                                MajorFunction::Close => {
+                                    println!("Close File {}", filepath.display());
+                                }
+                                MajorFunction::Cleanup => {
+                                    println!("Cleanup File {}", filepath.display());
+                                }
                             }
+                            entry.delete_on_close |= delete_on_close;
                         }
                         None => eprintln!(
                             "Process {} (Tracked {}) not found in map for file operation {}",
@@ -372,17 +396,27 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                                 let mut filepaths: Vec<_> = filemap.keys().collect();
                                 filepaths.sort();
                                 for filepath in filepaths {
-                                    let FileMapValue { read, write } =
-                                        filemap.get(filepath).unwrap();
-                                    if *read && *write {
-                                        println!("IO : {}", filepath.display());
-                                    } else if *read {
-                                        println!("I  : {}", filepath.display());
-                                    } else if *write {
-                                        println!(" O : {}", filepath.display());
+                                    let FileMapValue {
+                                        read,
+                                        write,
+                                        delete_on_close,
+                                    } = filemap.get(filepath).unwrap();
+                                    if *read {
+                                        print!("I");
                                     } else {
-                                        println!("   : {}", filepath.display());
+                                        print!(" ");
                                     }
+                                    if *write {
+                                        print!("O");
+                                    } else {
+                                        print!(" ");
+                                    }
+                                    if *delete_on_close {
+                                        print!("D");
+                                    } else {
+                                        print!(" ");
+                                    }
+                                    println!(": {}", filepath.display());
                                 }
                             }
                             None => eprintln!("Process {} not found in map", process_id),

@@ -27,6 +27,12 @@ struct CompleteMessage {
     struct Message message;
 };
 static_assert (sizeof(struct CompleteMessage)  == MESSAGE_TOTAL_SIZE_WITH_HEADER, "CompleteMessage is wrong size");
+static_assert (IRP_MJ_CREATE  == MajorFunction_Create, "MajorFunction_Create is incorrect");
+static_assert (IRP_MJ_CLOSE  == MajorFunction_Close, "MajorFunction_Close is incorrect");
+static_assert (IRP_MJ_READ  == MajorFunction_Read, "MajorFunction_Read is incorrect");
+static_assert (IRP_MJ_WRITE  == MajorFunction_Write, "MajorFunction_Write is incorrect");
+static_assert (IRP_MJ_SET_INFORMATION  == MajorFunction_SetInfo, "MajorFunction_SetInfo is incorrect");
+static_assert (IRP_MJ_CLEANUP  == MajorFunction_Cleanup, "MajorFunction_Cleanup is incorrect");
 
 #define POOL_TAG 'FSTR'
 PFLT_FILTER gFilterHandle;
@@ -134,6 +140,18 @@ CONST FLT_OPERATION_REGISTRATION Callbacks[] = {
       FsFilter1PreOperation,
       NULL },
     { IRP_MJ_CREATE,
+      0,
+      FsFilter1PreOperation,
+      NULL },
+    { IRP_MJ_SET_INFORMATION,
+      0,
+      FsFilter1PreOperation,
+      NULL },
+    { IRP_MJ_CLOSE,
+      0,
+      FsFilter1PreOperation,
+      NULL },
+    { IRP_MJ_CLEANUP,
       0,
       FsFilter1PreOperation,
       NULL },
@@ -702,6 +720,38 @@ FsFilter1PreOperation (
             message.Kind = MessageKind_File;
             message.Data.File.Attr.ProcessId = IdFromHandle(ProcessId);
             message.Data.File.Attr.MajorFunction = Data->Iopb->MajorFunction;
+            if (Data->Iopb->MajorFunction == IRP_MJ_READ) {
+            } else if (Data->Iopb->MajorFunction == IRP_MJ_WRITE) {
+            } else if (Data->Iopb->MajorFunction == IRP_MJ_CREATE) {
+                message.Data.File.Attr.DeleteOnClose = (Data->Iopb->Parameters.Create.Options & FILE_DELETE_ON_CLOSE) != 0;
+            } else if (Data->Iopb->MajorFunction == IRP_MJ_SET_INFORMATION) {
+                // Probably won't try to track deletions this way
+                FILE_INFORMATION_CLASS Class = Data->Iopb->Parameters.SetFileInformation.FileInformationClass;
+                if (Class == FileDispositionInformation ) {
+                    message.Data.File.Attr.DeleteOnClose = ((PFILE_DISPOSITION_INFORMATION) Data->Iopb->Parameters.SetFileInformation.InfoBuffer)->DeleteFile;
+                } else if (Class == FileDispositionInformationEx ){
+                    message.Data.File.Attr.DeleteOnClose = (((PFILE_DISPOSITION_INFORMATION_EX) Data->Iopb->Parameters.SetFileInformation.InfoBuffer)->Flags & FILE_DISPOSITION_DELETE) != 0;
+                } else {
+                    FltReleaseFileNameInformation(FileNameInfo);
+                    return FLT_PREOP_SUCCESS_NO_CALLBACK;
+                }
+            } else if (Data->Iopb->MajorFunction == IRP_MJ_CLOSE) {
+            } else if (Data->Iopb->MajorFunction == IRP_MJ_CLEANUP) {
+            } else {
+                PT_DBG_PRINT( TRACE_ALWAYS, (
+                    "FsFilter1!Pre(Op=%d): ThreadId=%6d ProcessId=%6d Create=%d Close=%d Read=%d Write=%d Name=%wZ\n",
+                    Data->Iopb->MajorFunction,
+                    ThreadId,
+                    ProcessId,
+                    (Data->Iopb->IrpFlags & IRP_CREATE_OPERATION) != 0,
+                    (Data->Iopb->IrpFlags & IRP_CLOSE_OPERATION) != 0,
+                    (Data->Iopb->IrpFlags & IRP_READ_OPERATION) != 0,
+                    (Data->Iopb->IrpFlags & IRP_WRITE_OPERATION) != 0,
+                    FileNameInfo->Name
+                ));
+                FltReleaseFileNameInformation(FileNameInfo);
+                return FLT_PREOP_SUCCESS_NO_CALLBACK;
+            }
             unsigned int n = min(FileNameInfo->Name.Length,MESSAGE_FILE_BUFFER_SIZE);
             message.Data.File.Attr.WideLength = (unsigned short) n / 2;
             errno_t err = memcpy_s(message.Data.File.Buffer, MESSAGE_FILE_BUFFER_SIZE, FileNameInfo->Name.Buffer, n);

@@ -12,8 +12,11 @@ enum MessageKind {
 };
 
 #define MajorFunction_Create 0
+#define MajorFunction_Close 2
 #define MajorFunction_Read 3
 #define MajorFunction_Write 4
+#define MajorFunction_SetInfo 6
+#define MajorFunction_Cleanup 18
 
 struct EmptyMessage {
     unsigned char Buffer[MESSAGE_STRUCT_SIZE];
@@ -21,6 +24,7 @@ struct EmptyMessage {
 
 struct FileMessageAttr {
     unsigned long ProcessId;
+    unsigned char DeleteOnClose;
     unsigned char MajorFunction;
     unsigned short WideLength;
 };

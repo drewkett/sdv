@@ -255,11 +255,23 @@ impl Drop for Filter {
     }
 }
 
+fn resolve_path(filepath: impl AsRef<Path>) -> Option<PathBuf> {
+    // I think all local files will start with device. Replacing \Device with \\?\
+    // causes the path to work for looking up files from rust
+    if let Ok(fileend) = filepath.as_ref().strip_prefix("/Device") {
+        // canonicalize to get drive letter.
+        if let Ok(filepath) = Path::new(r"\\?\").join(fileend).canonicalize() {
+            return Some(filepath);
+        }
+    }
+    None
+}
+
 #[derive(Debug, Default)]
 struct ProcessMapValue {
     parent_id: Option<u32>,
     children_ids: Vec<u32>,
-    process_name: Option<PathBuf>,
+    process_path: Option<PathBuf>,
     filemap: HashMap<PathBuf, FileMapValue>,
 }
 
@@ -369,7 +381,7 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                         match map.remove(&process_id) {
                             Some(ProcessMapValue {
                                 parent_id,
-                                process_name,
+                                mut process_path,
                                 children_ids,
                                 filemap,
                                 ..
@@ -379,9 +391,14 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                                 }
                                 let _ = child_map.remove(&process_id);
                                 let parent_id = parent_id.map(|p| p as isize).unwrap_or(-1);
+                                if let Some(resolved_process_path) =
+                                    process_path.as_ref().map(resolve_path)
+                                {
+                                    process_path = resolved_process_path;
+                                }
                                 println!(
                                     "Process {} finished (Parent {:?}) {:?}",
-                                    process_id, parent_id, process_name
+                                    process_id, parent_id, process_path
                                 );
                                 let mut filepaths: Vec<_> = filemap.keys().cloned().collect();
                                 filepaths.sort();
@@ -393,16 +410,11 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                                     }
                                     // I think all local files will start with device. Replacing \Device with \\?\
                                     // causes the path to work for looking up files from rust
-                                    if let Ok(fileend) = filepath.strip_prefix("/Device") {
-                                        filepath = Path::new(r"\\?\").join(fileend);
-                                        // canonicalize to get drive letter.
-                                        if let Ok(new_filepath) = filepath.canonicalize() {
-                                            filepath = new_filepath;
-                                        } else {
-                                            // canonicalize only works on files that exists
-                                            // If the file no longer exists we're assuming that it was a temporary file
-                                            continue;
-                                        }
+                                    if let Some(resolved_filepath) = resolve_path(&filepath) {
+                                        filepath = resolved_filepath;
+                                    } else {
+                                        // If the file cannot be resolved, then it no longer exists
+                                        continue;
                                     }
                                     if *read && *write {
                                         print!("U");
@@ -440,8 +452,8 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                     }
                     // TODO This should check for exe
                     let mut value = map.entry(process_id).or_default();
-                    if value.process_name.is_none() {
-                        value.process_name = Some(filepath)
+                    if value.process_path.is_none() {
+                        value.process_path = Some(filepath)
                     }
                 }
             }

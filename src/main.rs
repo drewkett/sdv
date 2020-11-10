@@ -404,17 +404,16 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                                             continue;
                                         }
                                     }
-                                    if *read {
+                                    if *read && *write {
+                                        print!("U");
+                                    } else if *read {
                                         print!("I");
-                                    } else {
-                                        print!(" ");
-                                    }
-                                    if *write {
+                                    } else if *write {
                                         print!("O");
                                     } else {
                                         print!(" ");
                                     }
-                                    println!(": {}", filepath.display());
+                                    println!(" {}", filepath.display());
                                 }
                             }
                             None => eprintln!("Process {} not found in map", process_id),

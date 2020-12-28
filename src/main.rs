@@ -396,10 +396,15 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
                                 {
                                     process_path = resolved_process_path;
                                 }
-                                println!(
-                                    "Process {} finished (Parent {:?}) {:?}",
-                                    process_id, parent_id, process_path
+                                print!(
+                                    "Process {} finished (ParentID {:?})",
+                                    process_id, parent_id,
                                 );
+                                if let Some(p) = process_path {
+                                    println!(" {}", p.display())
+                                } else {
+                                    println!("")
+                                }
                                 let mut filepaths: Vec<_> = filemap.keys().cloned().collect();
                                 filepaths.sort();
                                 for mut filepath in filepaths {

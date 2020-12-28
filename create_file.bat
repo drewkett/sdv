@@ -1,0 +1,1 @@
+ssh user@WINDEV2010EVAL "C:\share\create_file.exe"

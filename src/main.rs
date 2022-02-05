@@ -9,6 +9,7 @@ use winapi::shared::ntdef::HANDLE;
 use winapi::shared::winerror;
 use winapi::um::fltuser;
 
+/// Bindings from mini-filter header file
 #[allow(non_snake_case)]
 #[allow(dead_code)]
 #[allow(non_upper_case_globals)]
@@ -42,6 +43,7 @@ enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
+/// enum representing the functions identified by mini filter
 #[derive(Debug)]
 #[repr(u8)]
 enum MajorFunction {
@@ -145,7 +147,7 @@ impl TryFrom<bindings::Message> for Message {
 }
 
 #[repr(C)]
-struct CompleteMessage {
+struct MessageWithHeader {
     header: fltuser::FILTER_MESSAGE_HEADER,
     message: bindings::Message,
 }
@@ -153,13 +155,13 @@ struct CompleteMessage {
 #[test]
 fn test_sizes() {
     assert_eq!(
-        ::std::mem::size_of::<CompleteMessage>(),
+        ::std::mem::size_of::<MessageWithHeader>(),
         bindings::MESSAGE_TOTAL_SIZE_WITH_HEADER as usize,
-        concat!("Size of: ", stringify!(CompleteMessage))
+        concat!("Size of: ", stringify!(MessageWithHeader))
     );
 }
 
-impl CompleteMessage {
+impl MessageWithHeader {
     fn as_header(&mut self) -> *mut fltuser::FILTER_MESSAGE_HEADER {
         self as *mut Self as *mut fltuser::FILTER_MESSAGE_HEADER
     }
@@ -171,7 +173,6 @@ struct Port {
 
 impl Drop for Port {
     fn drop(&mut self) {
-        // unsafe {}
         let _res = unsafe { winapi::um::handleapi::CloseHandle(self.handle) };
     }
 }
@@ -206,15 +207,15 @@ impl Port {
         }
     }
 
-    fn get_message(&mut self) -> Result<Box<CompleteMessage>> {
-        let mut raw_message: Box<CompleteMessage> = Box::new(unsafe { std::mem::zeroed() });
+    fn get_message(&mut self) -> Result<Box<MessageWithHeader>> {
+        let mut raw_message: Box<MessageWithHeader> = Box::new(unsafe { std::mem::zeroed() });
         let overlapped = std::ptr::null_mut();
         debug_assert!(std::mem::size_of::<Message>() < u32::MAX as usize);
         let result = unsafe {
             fltuser::FilterGetMessage(
                 self.handle,
                 raw_message.as_header(),
-                std::mem::size_of::<CompleteMessage>() as u32,
+                std::mem::size_of::<MessageWithHeader>() as u32,
                 overlapped,
             )
         };
@@ -281,7 +282,7 @@ struct FileMapValue {
     write: bool,
 }
 
-fn worker(rcv: crossbeam::channel::Receiver<Box<CompleteMessage>>) {
+fn worker(rcv: crossbeam::channel::Receiver<Box<MessageWithHeader>>) {
     let mut map = HashMap::<u32, ProcessMapValue>::new();
     let mut child_map = HashMap::new();
     let tracked_process_names = vec![

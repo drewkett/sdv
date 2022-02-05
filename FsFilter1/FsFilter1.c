@@ -22,11 +22,17 @@ Environment:
 
 #include "FsFilter1.h"
 
+// This is struct used to pass data from mini-filter to rust code. The struct size is a fixed
+// size of MESSAGE_WITH_HEADER_SIZE
 struct CompleteMessage {
     FILTER_MESSAGE_HEADER header;
     struct Message message;
 };
-static_assert (sizeof(struct CompleteMessage)  == MESSAGE_TOTAL_SIZE_WITH_HEADER, "CompleteMessage is wrong size");
+
+// Assert to make sure the compiler calculates the struct message size to be the same as the 
+// the defined constant in the header
+static_assert (sizeof(struct CompleteMessage)  == MESSAGE_WITH_HEADER_SIZE, "CompleteMessage is wrong size");
+// Asserts to validate user defined constants match those from win api
 static_assert (IRP_MJ_CREATE  == MajorFunction_Create, "MajorFunction_Create is incorrect");
 static_assert (IRP_MJ_CLOSE  == MajorFunction_Close, "MajorFunction_Close is incorrect");
 static_assert (IRP_MJ_READ  == MajorFunction_Read, "MajorFunction_Read is incorrect");
@@ -104,7 +110,7 @@ FsFilter1InstanceQueryTeardown (
     );
 
 FLT_PREOP_CALLBACK_STATUS
-FsFilter1PreOperation (
+IoOperationCallback (
     _Inout_ PFLT_CALLBACK_DATA Data,
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
@@ -130,30 +136,31 @@ EXTERN_C_END
 //  operation registration
 //
 
+// Used when registering callback operations
 CONST FLT_OPERATION_REGISTRATION Callbacks[] = {
     { IRP_MJ_READ,
       0,
-      FsFilter1PreOperation,
+      IoOperationCallback,
       NULL },
     { IRP_MJ_WRITE,
       0,
-      FsFilter1PreOperation,
+      IoOperationCallback,
       NULL },
     // { IRP_MJ_CREATE,
     //   0,
-    //   FsFilter1PreOperation,
+    //   IoOperationCallback,
     //   NULL },
     // { IRP_MJ_SET_INFORMATION,
     //   0,
-    //   FsFilter1PreOperation,
+    //   IoOperationCallback,
     //   NULL },
     // { IRP_MJ_CLOSE,
     //   0,
-    //   FsFilter1PreOperation,
+    //   IoOperationCallback,
     //   NULL },
     // { IRP_MJ_CLEANUP,
     //   0,
-    //   FsFilter1PreOperation,
+    //   IoOperationCallback,
     //   NULL },
 
     { IRP_MJ_OPERATION_END }
@@ -306,7 +313,7 @@ void WorkItemSendMessage(
         gFilterHandle,
         &gClientPort,
         &PContext->Message, // SenderBuffer
-        MESSAGE_TOTAL_SIZE, // SenderBufferLength
+        MESSAGE_SIZE, // SenderBufferLength
         NULL, // ReplyBuffer
         0, // ReplyLength
         &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
@@ -328,6 +335,8 @@ unsigned long IdFromHandle(HANDLE HId)
     return Id;
 }
 
+// This function is called at the start of a process. The pid of the process and its parent
+// are sent to the userspace process
 void ProcessCreateCallback(
     _In_ HANDLE HParentId,
     _In_ HANDLE HProcessId,
@@ -359,7 +368,7 @@ void ProcessCreateCallback(
             gFilterHandle,
             &gClientPort,
             PContext, // SenderBuffer
-            MESSAGE_TOTAL_SIZE, // SenderBufferLength
+            MESSAGE_SIZE, // SenderBufferLength
             NULL, // ReplyBuffer
             0, // ReplyLength
             &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
@@ -395,6 +404,8 @@ void ProcessCreateCallback(
     }
 }
 
+// This is called when a module is loaded associated which is typically the 
+// executable file for a process
 void ImageLoadCallback(
     _In_ PUNICODE_STRING FullImageName,
     _In_ HANDLE HProcessId,
@@ -424,6 +435,7 @@ void ImageLoadCallback(
         PContext->Message.Data.Image.Attr.ProcessId = ProcessId;
         errno_t err = 0;
         if (FullImageName != NULL) {
+	    // Pass the full image name as windows WTF encoding
             unsigned int n = min(FullImageName->Length,MESSAGE_IMAGE_BUFFER_SIZE);
             PContext->Message.Data.Image.Attr.WideLength = (unsigned short) n / 2;
             err = memcpy_s(PContext->Message.Data.Image.Buffer, MESSAGE_IMAGE_BUFFER_SIZE, FullImageName->Buffer, n);
@@ -435,7 +447,7 @@ void ImageLoadCallback(
                 gFilterHandle,
                 &gClientPort,
                 PContext, // SenderBuffer
-                MESSAGE_TOTAL_SIZE, // SenderBufferLength
+                MESSAGE_SIZE, // SenderBufferLength
                 NULL, // ReplyBuffer
                 0, // ReplyLength
                 &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout
@@ -670,11 +682,10 @@ FsFilter1Unload (
 }
 
 
-/*************************************************************************
-    MiniFilter callback routines.
-*************************************************************************/
+// This is the callback for I/O operations. This currently sends a message to user space
+// with the operation type and the PID
 FLT_PREOP_CALLBACK_STATUS
-FsFilter1PreOperation (
+IoOperationCallback (
     _Inout_ PFLT_CALLBACK_DATA Data,
     _In_ PCFLT_RELATED_OBJECTS FltObjects,
     _Flt_CompletionContext_Outptr_ PVOID *CompletionContext
@@ -756,7 +767,7 @@ FsFilter1PreOperation (
                     gFilterHandle,
                     &gClientPort,
                     &message, // SenderBuffer
-                    MESSAGE_TOTAL_SIZE, // SenderBufferLength
+                    MESSAGE_SIZE, // SenderBufferLength
                     NULL, // ReplyBuffer
                     0, // ReplyLength
                     &PortTimeout // Timeout in 100 nanoseconds. Negative is a relative timeout

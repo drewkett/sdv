@@ -24,11 +24,11 @@ enum Error {
     #[error("Insufficient Privileges (0x{0:x})")]
     InsufficientPrivileges(i32),
     #[error("Port Connection Error (0x{0:x})")]
-    ConnectError(i32),
+    Connection(i32),
     #[error("Access Denied")]
     AccessDenied,
     #[error("Get Message Error (0x{0:x})")]
-    GetMessageError(i32),
+    GetMessage(i32),
     #[error("Invalid Message Variant)")]
     InvalidMessageVariant,
     #[error("Unknown Message Variant ({0})")]
@@ -202,7 +202,7 @@ impl Port {
         } else {
             match result {
                 winerror::E_ACCESSDENIED => Err(Error::AccessDenied),
-                _ => Err(Error::ConnectError(result)),
+                _ => Err(Error::Connection(result)),
             }
         }
     }
@@ -222,7 +222,7 @@ impl Port {
         if winerror::SUCCEEDED(result) {
             Ok(raw_message)
         } else {
-            Err(Error::GetMessageError(result))
+            Err(Error::GetMessage(result))
         }
     }
 }
@@ -308,7 +308,7 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<MessageWithHeader>>) {
                 //     major_function, process_id, filepath
                 // );
                 if let Some(tracked_id) = child_map.get(&process_id) {
-                    match map.get_mut(&tracked_id) {
+                    match map.get_mut(tracked_id) {
                         Some(ProcessMapValue { filemap, .. }) => {
                             // println!("Attaching to {} : {}", tracked_id, filepath.display());
                             let mut entry = filemap.entry(filepath.clone()).or_default();
@@ -347,10 +347,15 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<MessageWithHeader>>) {
                 // );
                 if create {
                     let tracked_id_from_parent = child_map.get(&parent_id).copied();
-                    if tracked_id_from_parent.is_none() {
+                    if let Some(tracked_id) = tracked_id_from_parent {
+                        child_map.insert(process_id, tracked_id);
+                        if let Some(v) = map.get_mut(&tracked_id) {
+                            v.children_ids.push(process_id)
+                        }
+                    } else {
                         // println!("Process started {} (Parent {})", process_id, parent_id);
                         // Need to insert in case the process name matches later
-                        match map.insert(
+                        if let Some(ProcessMapValue { parent_id, ..}) =  map.insert(
                             process_id,
                             ProcessMapValue {
                                 parent_id: Some(parent_id),
@@ -358,24 +363,15 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<MessageWithHeader>>) {
                             },
                         ) {
                             // Not sure if i shoudl replace the existing or not
-                            Some(ProcessMapValue { parent_id, .. }) => eprintln!(
+                             eprintln!(
                                 "Process {} already in map (Parent {:?})",
                                 process_id, parent_id
-                            ),
-                            None => {}
+                            )
                         }
-                    } else {
-                        let tracked_id = tracked_id_from_parent.unwrap();
-                        child_map.insert(process_id, tracked_id);
-                        map.get_mut(&tracked_id)
-                            .map(|v| v.children_ids.push(process_id));
                     }
                 } else {
                     let tracked_id = child_map.get(&process_id).copied();
-                    if tracked_id.is_none() {
-                        let _ = map.remove(&process_id);
-                    } else {
-                        let tracked_id = tracked_id.unwrap();
+                    if let Some(tracked_id) = tracked_id {
                         if tracked_id != process_id {
                             continue;
                         }
@@ -404,7 +400,7 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<MessageWithHeader>>) {
                                 if let Some(p) = process_path {
                                     println!(" {}", p.display())
                                 } else {
-                                    println!("")
+                                    println!()
                                 }
                                 let mut filepaths: Vec<_> = filemap.keys().cloned().collect();
                                 filepaths.sort();
@@ -436,6 +432,8 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<MessageWithHeader>>) {
                             }
                             None => eprintln!("Process {} not found in map", process_id),
                         }
+                    } else {
+                        let _ = map.remove(&process_id);
                     }
                 }
             }

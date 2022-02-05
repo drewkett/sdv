@@ -24,7 +24,7 @@ enum Error {
     #[error("Insufficient Privileges (0x{0:x})")]
     InsufficientPrivileges(i32),
     #[error("Port Connection Error (0x{0:x})")]
-    Connection(i32),
+    ConnectionFailed(i32),
     #[error("Access Denied")]
     AccessDenied,
     #[error("Get Message Error (0x{0:x})")]
@@ -202,7 +202,7 @@ impl Port {
         } else {
             match result {
                 winerror::E_ACCESSDENIED => Err(Error::AccessDenied),
-                _ => Err(Error::Connection(result)),
+                _ => Err(Error::ConnectionFailed(result)),
             }
         }
     }

@@ -355,7 +355,7 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<MessageWithHeader>>) {
                     } else {
                         // println!("Process started {} (Parent {})", process_id, parent_id);
                         // Need to insert in case the process name matches later
-                        if let Some(ProcessMapValue { parent_id, ..}) =  map.insert(
+                        if let Some(ProcessMapValue { parent_id, .. }) = map.insert(
                             process_id,
                             ProcessMapValue {
                                 parent_id: Some(parent_id),
@@ -363,7 +363,7 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<MessageWithHeader>>) {
                             },
                         ) {
                             // Not sure if i shoudl replace the existing or not
-                             eprintln!(
+                            eprintln!(
                                 "Process {} already in map (Parent {:?})",
                                 process_id, parent_id
                             )

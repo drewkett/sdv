@@ -1,1 +1,0 @@
-cargo build --release || exit /b 1

@@ -14,3 +14,19 @@ I \\?\C:\Users\Andrew\Dev\sdv\Cargo.toml
 O \\?\C:\Users\Andrew\Dev\sdv\target\out1.txt
 O \\?\C:\Users\Andrew\Dev\sdv\target\out2.txt
 ```
+
+Legend
+```
+I -> Input File (ie file that was read from)
+O -> Output File (ie file that was written to)
+U -> Updated File (ie file that was read from and written to)
+```
+
+Currently temporary files (ie files that are created and then deleted before the process ends) are excluded.
+
+
+## How it works
+
+The kernel driver is a mini-filter driver which separately tracks process creation/deletion, image load/unload and I/O operations. For each event, it sends a message to the user space process `sdv.exe` using a filter communication port. The kernel driver is intentionally "dumb" and doesn't do anything beyond just sending the messages to the user space process for all events. This is to keep that code as simple as possible since it runs in the kernel. 
+
+The user space process `sdv.exe` continually receives these messages and then maps the three types of operations (process, image, I/O) into a coherent view of the data which incoporates the process id, the file names that are read and written and the image name (ie the process name) of the process. Since this is just a demo utility, it just prints out the information for the process names of interest which are passed to the `sdv.exe` as arguments.

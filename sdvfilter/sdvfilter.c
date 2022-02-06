@@ -24,14 +24,14 @@ Environment:
 
 // This is struct used to pass data from mini-filter to rust code. The struct size is a fixed
 // size of MESSAGE_WITH_HEADER_SIZE
-struct CompleteMessage {
+struct MessageWithHeader {
     FILTER_MESSAGE_HEADER header;
     struct Message message;
 };
 
 // Assert to make sure the compiler calculates the struct message size to be the same as the 
 // the defined constant in the header
-static_assert (sizeof(struct CompleteMessage)  == MESSAGE_WITH_HEADER_SIZE, "CompleteMessage is wrong size");
+static_assert (sizeof(struct MessageWithHeader)  == MESSAGE_WITH_HEADER_SIZE, "MessageWithHeader is wrong size");
 // Asserts to validate user defined constants match those from win api
 static_assert (IRP_MJ_CREATE  == MajorFunction_Create, "MajorFunction_Create is incorrect");
 static_assert (IRP_MJ_CLOSE  == MajorFunction_Close, "MajorFunction_Close is incorrect");

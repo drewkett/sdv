@@ -282,12 +282,9 @@ struct FileMapValue {
     write: bool,
 }
 
-fn worker(rcv: crossbeam::channel::Receiver<Box<MessageWithHeader>>) {
+fn worker(rcv: crossbeam::channel::Receiver<Box<MessageWithHeader>>, tracked_process_names: Vec<OsString>) {
     let mut map = HashMap::<u32, ProcessMapValue>::new();
     let mut child_map = HashMap::new();
-    let tracked_process_names = vec![
-        OsStr::new("create_file.exe").to_owned(),
-    ];
     while let Ok(raw_message) = rcv.recv() {
         let message = match raw_message.message.try_into() {
             Ok(m) => m,
@@ -465,13 +462,13 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<MessageWithHeader>>) {
     }
 }
 
-fn _main() -> Result<()> {
+fn _main(tracked_process_names: Vec<OsString>) -> Result<()> {
     // Needs SeLoadDriverPrivilege permission on account to use, which just admin doesn't seem to have
     // let _filter = Filter::load("fsfilter1")?;
     let mut port = Port::connect(r"\sdv_comms_port")?;
     let (snd, rcv) = crossbeam::channel::unbounded();
     let thread = std::thread::spawn(|| {
-        worker(rcv);
+        worker(rcv, tracked_process_names);
     });
     loop {
         let message = port.get_message()?;
@@ -485,7 +482,11 @@ fn _main() -> Result<()> {
 }
 
 fn main() {
-    if let Err(e) = _main() {
+    let tracked_process_names: Vec<_> = std::env::args_os().skip(1).collect();
+    for name in &tracked_process_names {
+        println!("Tracking {}",name.to_string_lossy());
+    }
+    if let Err(e) = _main(tracked_process_names) {
         eprintln!("error : {}", e)
     }
 }

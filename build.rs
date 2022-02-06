@@ -9,7 +9,7 @@ fn main() {
     // println!("cargo:rustc-link-lib=bz2");
 
     // Tell cargo to invalidate the built crate whenever the wrapper changes
-    println!("cargo:rerun-if-changed=FsFilter1/FsFilter1.h");
+    println!("cargo:rerun-if-changed=sdvfilter/sdvfilter.h");
 
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
@@ -17,7 +17,7 @@ fn main() {
     let bindings = bindgen::Builder::default()
         // The input header we would like to generate
         // bindings for.
-        .header("FsFilter1/FsFilter1.h")
+        .header("sdvfilter/sdvfilter.h")
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))

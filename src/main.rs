@@ -286,7 +286,6 @@ fn worker(rcv: crossbeam::channel::Receiver<Box<MessageWithHeader>>) {
     let mut map = HashMap::<u32, ProcessMapValue>::new();
     let mut child_map = HashMap::new();
     let tracked_process_names = vec![
-        OsStr::new("nastran.exe").to_owned(),
         OsStr::new("create_file.exe").to_owned(),
     ];
     while let Ok(raw_message) = rcv.recv() {

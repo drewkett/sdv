@@ -2,11 +2,11 @@
 
 Module Name:
 
-    FsFilter1.c
+    sdvfilter.c
 
 Abstract:
 
-    This is the main module of the FsFilter1 miniFilter driver.
+    This is the main module of the sdvfilter miniFilter driver.
 
 Environment:
 
@@ -20,7 +20,7 @@ Environment:
 
 #pragma prefast(disable:__WARNING_ENCODE_MEMBER_FUNCTION_POINTER, "Not valid for kernel mode drivers")
 
-#include "FsFilter1.h"
+#include "sdvfilter.h"
 
 // This is struct used to pass data from mini-filter to rust code. The struct size is a fixed
 // size of MESSAGE_WITH_HEADER_SIZE

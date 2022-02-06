@@ -1,5 +1,5 @@
 ;;;
-;;; FsFilter1
+;;; sdvfilter
 ;;;
 
 [Version]
@@ -9,7 +9,7 @@ Class       = "ActivityMonitor"                         ;This is determined by t
 ClassGuid   = {b86dff51-a31e-4bac-b3cf-e8cfe75c9fc2}    ;This value is determined by the Load Order Group value
 Provider    = %ManufacturerName%
 DriverVer   = 
-CatalogFile = FsFilter1.cat
+CatalogFile = sdvfilter.cat
 PnpLockDown=1
 
 [DestinationDirs]
@@ -72,7 +72,7 @@ HKR,"Instances\"%Instance1.Name%,"Flags",0x00010001,%Instance1.Flags%
 %DriverName%.sys
 
 [SourceDisksFiles]
-FsFilter1.sys = 1,,
+sdvfilter.sys = 1,,
 
 [SourceDisksNames]
 1 = %DiskId1%,,,
@@ -84,14 +84,14 @@ FsFilter1.sys = 1,,
 [Strings]
 ; TODO - Add your manufacturer
 ManufacturerName        = "Template"
-ServiceDescription      = "FsFilter1 Mini-Filter Driver"
-ServiceName             = "FsFilter1"
-DriverName              = "FsFilter1"
-DiskId1                 = "FsFilter1 Device Installation Disk"
+ServiceDescription      = "sdvfilter Driver"
+ServiceName             = "sdvfilter"
+DriverName              = "sdvfilter"
+DiskId1                 = "sdvfilter Device Installation Disk"
 
 ;Instances specific information.
-DefaultInstance         = "FsFilter1 Instance"
-Instance1.Name          = "FsFilter1 Instance"
+DefaultInstance         = "sdvfilter Instance"
+Instance1.Name          = "sdvfilter Instance"
 ; TODO - Change the altitude value, see https://msdn.microsoft.com/en-us/windows/hardware/drivers/ifs/load-order-groups-and-altitudes-for-minifilter-drivers
-Instance1.Altitude       = "360001"
+Instance1.Altitude       = "360002"
 Instance1.Flags         = 0x0              ; Allow all attachments

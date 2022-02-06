@@ -35,9 +35,9 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="FsFilter1.rc" />
-    <ClCompile Include="FsFilter1.c" />
-    <Inf Include="FsFilter1.inf" />
+    <ResourceCompile Include="sdvfilter.rc" />
+    <ClCompile Include="sdvfilter.c" />
+    <Inf Include="sdvfilter.inf" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{7F8C0959-03AB-4DF9-91F0-40A825AE71A2}</ProjectGuid>
